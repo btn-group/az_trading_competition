@@ -9,6 +9,7 @@ mod az_trading_competition {
         admin: AccountId,
         start: Timestamp,
         end: Timestamp,
+        router: AccountId,
     }
 
     // === CONTRACT ===
@@ -17,15 +18,17 @@ mod az_trading_competition {
         admin: AccountId,
         start: Timestamp,
         end: Timestamp,
+        router: AccountId,
     }
 
     impl AzTradingCompetition {
         #[ink(constructor)]
-        pub fn new(start: Timestamp, end: Timestamp) -> Self {
+        pub fn new(start: Timestamp, end: Timestamp, router: AccountId) -> Self {
             Self {
                 admin: Self::env().caller(),
                 start,
                 end,
+                router,
             }
         }
 
@@ -36,6 +39,7 @@ mod az_trading_competition {
                 admin: self.admin,
                 start: self.start,
                 end: self.end,
+                router: self.router,
             }
         }
     }
@@ -56,8 +60,14 @@ mod az_trading_competition {
         fn init() -> (DefaultAccounts<DefaultEnvironment>, AzTradingCompetition) {
             let accounts = default_accounts();
             set_caller::<DefaultEnvironment>(accounts.bob);
-            let az_trading_competition = AzTradingCompetition::new(MOCK_START, MOCK_END);
+            let az_trading_competition =
+                AzTradingCompetition::new(MOCK_START, MOCK_END, mock_router_address());
             (accounts, az_trading_competition)
+        }
+
+        fn mock_router_address() -> AccountId {
+            let accounts: DefaultAccounts<DefaultEnvironment> = default_accounts();
+            accounts.django
         }
 
         // === TEST QUERIES ===
@@ -69,6 +79,7 @@ mod az_trading_competition {
             assert_eq!(config.admin, az_trading_competition.admin);
             assert_eq!(config.start, az_trading_competition.start);
             assert_eq!(config.end, az_trading_competition.end);
+            assert_eq!(config.router, az_trading_competition.router);
         }
     }
 }
