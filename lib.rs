@@ -2,6 +2,9 @@
 
 #[ink::contract]
 mod az_trading_competition {
+    use ink::prelude::{vec, vec::Vec};
+    use ink::storage::Mapping;
+
     // === STRUCTS ===
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -10,6 +13,7 @@ mod az_trading_competition {
         start: Timestamp,
         end: Timestamp,
         router: AccountId,
+        allowed_pools_vec: Vec<AccountId>,
     }
 
     // === CONTRACT ===
@@ -19,6 +23,8 @@ mod az_trading_competition {
         start: Timestamp,
         end: Timestamp,
         router: AccountId,
+        allowed_pools: Mapping<AccountId, bool>,
+        allowed_pools_vec: Vec<AccountId>,
     }
 
     impl AzTradingCompetition {
@@ -29,6 +35,8 @@ mod az_trading_competition {
                 start,
                 end,
                 router,
+                allowed_pools: Mapping::default(),
+                allowed_pools_vec: vec![],
             }
         }
 
@@ -40,6 +48,7 @@ mod az_trading_competition {
                 start: self.start,
                 end: self.end,
                 router: self.router,
+                allowed_pools_vec: self.allowed_pools_vec.clone(),
             }
         }
     }
@@ -80,6 +89,11 @@ mod az_trading_competition {
             assert_eq!(config.start, az_trading_competition.start);
             assert_eq!(config.end, az_trading_competition.end);
             assert_eq!(config.router, az_trading_competition.router);
+            assert_eq!(config.router, az_trading_competition.router);
+            assert_eq!(
+                config.allowed_pools_vec,
+                az_trading_competition.allowed_pools_vec
+            );
         }
     }
 }
