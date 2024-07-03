@@ -1,5 +1,11 @@
 # Aleph Zero Trading Competition Smart Contract
 
+### Note about DIA oracle for decentralising winner selection
+
+It's not possible to use the DIA oracle right now as you can't specify a time. In an ideal situation, we would want the first price after the end timestamp but the oracle only gives you the latest timestamp. Unless a function to get the prices was called immediately after the end, people would be unhappy about the result. Even if someone was ready to call, if a network issue happened with either DIA or Aleph Zero, this could cause massive problems.
+
+For the meanwhile, the best option is to select official sources for price that have an api for prices with time range.
+
 ## Getting Started
 
 ### Prerequisites
