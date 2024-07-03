@@ -64,11 +64,43 @@ mod az_trading_competition {
         // if not, add to allowed_pools_vec and allowed_pools
         #[ink(message)]
         pub fn add_pools(&mut self, pools: Vec<AccountId>) -> Result<()> {
+            Self::authorise(self.admin, Self::env().caller())?;
+
             for pool in pools.iter() {
                 if self.allowed_pools.get(&pool).is_none() {
                     self.allowed_pools_vec.push(*pool);
                     self.allowed_pools.insert(pool, &true);
                 }
+            }
+
+            Ok(())
+        }
+
+        // Go through pools
+        // check if pool is in allowed_pools
+        // if not, add to allowed_pools_vec and allowed_pools
+        #[ink(message)]
+        pub fn remove_pools(&mut self, pools: Vec<AccountId>) -> Result<()> {
+            Self::authorise(self.admin, Self::env().caller())?;
+
+            for pool in pools.iter() {
+                if self.allowed_pools.get(&pool).is_some() {
+                    let index = self
+                        .allowed_pools_vec
+                        .iter()
+                        .position(|x| x == pool)
+                        .unwrap();
+                    self.allowed_pools_vec.remove(index);
+                    self.allowed_pools.remove(pool);
+                }
+            }
+
+            Ok(())
+        }
+
+        fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
+            if allowed != received {
+                return Err(AzTradingCompetitionError::Unauthorised);
             }
 
             Ok(())
@@ -122,8 +154,9 @@ mod az_trading_competition {
         #[ink::test]
         fn test_add_pools() {
             let (accounts, mut az_trading_competition) = init();
-            // when pool is not in allowed_pools
-            // * it adds pools to allowed_pools and allowed_pools_vec
+            // when called by admin
+            // = when pool is not in allowed_pools
+            // = * it adds pools to allowed_pools and allowed_pools_vec
             az_trading_competition
                 .add_pools(vec![accounts.django])
                 .unwrap();
@@ -140,8 +173,8 @@ mod az_trading_competition {
                     .is_some(),
                 true
             );
-            // when multiple pools are provided
-            // * it adds pools that haven't been added already
+            // = when multiple pools are provided
+            // = * it adds pools that haven't been added already
             az_trading_competition
                 .add_pools(vec![accounts.django, accounts.alice])
                 .unwrap();
@@ -158,7 +191,7 @@ mod az_trading_competition {
                     .is_some(),
                 true
             );
-            // * it ignores the pools have already been added
+            // = * it ignores the pools have already been added
             assert_eq!(
                 az_trading_competition
                     .allowed_pools_vec
@@ -166,6 +199,47 @@ mod az_trading_competition {
                 true
             );
             assert_eq!(az_trading_competition.allowed_pools_vec.len(), 2);
+
+            // when called by non-admin
+            set_caller::<DefaultEnvironment>(accounts.django);
+            // * it raises an error
+            let result = az_trading_competition.add_pools(vec![accounts.django, accounts.alice]);
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+        }
+
+        #[ink::test]
+        fn test_remove_pools() {
+            let (accounts, mut az_trading_competition) = init();
+            // when called by admin
+            // = when pool is in allowed_pools
+            az_trading_competition
+                .add_pools(vec![accounts.django])
+                .unwrap();
+            // == when pool being removed is in allowed_pools
+            // == * it removes the pool from allowed_pools_vec
+            az_trading_competition
+                .remove_pools(vec![accounts.django, accounts.alice])
+                .unwrap();
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools_vec
+                    .contains(&accounts.django),
+                false
+            );
+            // == * it removes the pool from allowed_pools
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools
+                    .get(&accounts.django)
+                    .is_none(),
+                true
+            );
+            assert_eq!(az_trading_competition.allowed_pools_vec.len(), 0);
+            // when called by non-admin
+            set_caller::<DefaultEnvironment>(accounts.django);
+            // * it raises an error
+            let result = az_trading_competition.remove_pools(vec![accounts.django, accounts.alice]);
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
         }
     }
 }
