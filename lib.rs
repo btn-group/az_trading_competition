@@ -20,6 +20,8 @@ mod az_trading_competition {
         end: Timestamp,
         router: AccountId,
         allowed_pools_vec: Vec<AccountId>,
+        entry_fee_token: AccountId,
+        entry_fee_amount: Balance,
     }
 
     // === CONTRACT ===
@@ -31,11 +33,19 @@ mod az_trading_competition {
         router: AccountId,
         allowed_pools: Mapping<AccountId, bool>,
         allowed_pools_vec: Vec<AccountId>,
+        entry_fee_token: AccountId,
+        entry_fee_amount: Balance,
     }
 
     impl AzTradingCompetition {
         #[ink(constructor)]
-        pub fn new(start: Timestamp, end: Timestamp, router: AccountId) -> Self {
+        pub fn new(
+            start: Timestamp,
+            end: Timestamp,
+            router: AccountId,
+            entry_fee_token: AccountId,
+            entry_fee_amount: Balance,
+        ) -> Self {
             Self {
                 admin: Self::env().caller(),
                 start,
@@ -43,6 +53,8 @@ mod az_trading_competition {
                 router,
                 allowed_pools: Mapping::default(),
                 allowed_pools_vec: vec![],
+                entry_fee_token,
+                entry_fee_amount,
             }
         }
 
@@ -55,6 +67,8 @@ mod az_trading_competition {
                 end: self.end,
                 router: self.router,
                 allowed_pools_vec: self.allowed_pools_vec.clone(),
+                entry_fee_token: self.entry_fee_token,
+                entry_fee_amount: self.entry_fee_amount,
             }
         }
 
@@ -98,9 +112,30 @@ mod az_trading_competition {
             Ok(())
         }
 
+        #[ink(message)]
+        pub fn register(&mut self) -> Result<()> {
+            // 1. Check that time is before start
+            self.competition_has_not_started()?;
+            // 2. Check that user hasn't registered already
+
+            Ok(())
+        }
+
+        // === PRIVATE ===
         fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
             if allowed != received {
                 return Err(AzTradingCompetitionError::Unauthorised);
+            }
+
+            Ok(())
+        }
+
+        fn competition_has_not_started(&self) -> Result<()> {
+            let block_timestamp: Timestamp = Self::env().block_timestamp();
+            if block_timestamp >= self.start {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition has started".to_string(),
+                ));
             }
 
             Ok(())
@@ -116,6 +151,7 @@ mod az_trading_competition {
         };
 
         // === CONSTANTS ===
+        const MOCK_ENTRY_FEE_AMOUNT: Balance = 555_555;
         const MOCK_START: Timestamp = 654_654;
         const MOCK_END: Timestamp = 754_654;
 
@@ -123,9 +159,19 @@ mod az_trading_competition {
         fn init() -> (DefaultAccounts<DefaultEnvironment>, AzTradingCompetition) {
             let accounts = default_accounts();
             set_caller::<DefaultEnvironment>(accounts.bob);
-            let az_trading_competition =
-                AzTradingCompetition::new(MOCK_START, MOCK_END, mock_router_address());
+            let az_trading_competition = AzTradingCompetition::new(
+                MOCK_START,
+                MOCK_END,
+                mock_router_address(),
+                mock_entry_fee_token(),
+                MOCK_ENTRY_FEE_AMOUNT,
+            );
             (accounts, az_trading_competition)
+        }
+
+        fn mock_entry_fee_token() -> AccountId {
+            let accounts: DefaultAccounts<DefaultEnvironment> = default_accounts();
+            accounts.eve
         }
 
         fn mock_router_address() -> AccountId {
@@ -148,6 +194,8 @@ mod az_trading_competition {
                 config.allowed_pools_vec,
                 az_trading_competition.allowed_pools_vec
             );
+            assert_eq!(config.entry_fee_token, mock_entry_fee_token());
+            assert_eq!(config.entry_fee_amount, MOCK_ENTRY_FEE_AMOUNT);
         }
 
         // === TEST HANDLES ===
