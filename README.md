@@ -1,5 +1,13 @@
 # Aleph Zero Trading Competition Smart Contract
 
+### Notes about allowed bools
+
+Only pools with large market caps will be allowed.
+
+AZERO/USDC: 5C6s2qJAG5dCmPvR9WyKAVL6vJRDS9BjMwbrqwXGCsPiFViF
+USDC/USDT: 5CiP96MhEGHnLFGS64uVznrwbuVdFj6kewrEZoLRzxUEqxws
+WAZERO/WETH: 5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE
+
 ### Note about DIA oracle for decentralising winner selection
 
 It's not possible to use the DIA oracle right now as you can't specify a time. In an ideal situation, we would want the first price after the end timestamp but the oracle only gives you the latest timestamp. Unless a function to get the prices was called immediately after the end, people would be unhappy about the result. Even if someone was ready to call, if a network issue happened with either DIA or Aleph Zero, this could cause massive problems.
