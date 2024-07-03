@@ -1,9 +1,15 @@
 #![cfg_attr(not(feature = "std"), no_std, no_main)]
 
+mod errors;
+
 #[ink::contract]
 mod az_trading_competition {
+    use crate::errors::AzTradingCompetitionError;
     use ink::prelude::{vec, vec::Vec};
     use ink::storage::Mapping;
+
+    // === TYPES ===
+    type Result<T> = core::result::Result<T, AzTradingCompetitionError>;
 
     // === STRUCTS ===
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
@@ -51,6 +57,22 @@ mod az_trading_competition {
                 allowed_pools_vec: self.allowed_pools_vec.clone(),
             }
         }
+
+        // === HANDLES ===
+        // Go through pools
+        // check if pool is in allowed_pools
+        // if not, add to allowed_pools_vec and allowed_pools
+        #[ink(message)]
+        pub fn add_pools(&mut self, pools: Vec<AccountId>) -> Result<()> {
+            for pool in pools.iter() {
+                if self.allowed_pools.get(&pool).is_none() {
+                    self.allowed_pools_vec.push(*pool);
+                    self.allowed_pools.insert(pool, &true);
+                }
+            }
+
+            Ok(())
+        }
     }
 
     #[cfg(test)]
@@ -94,6 +116,56 @@ mod az_trading_competition {
                 config.allowed_pools_vec,
                 az_trading_competition.allowed_pools_vec
             );
+        }
+
+        // === TEST HANDLES ===
+        #[ink::test]
+        fn test_add_pools() {
+            let (accounts, mut az_trading_competition) = init();
+            // when pool is not in allowed_pools
+            // * it adds pools to allowed_pools and allowed_pools_vec
+            az_trading_competition
+                .add_pools(vec![accounts.django])
+                .unwrap();
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools_vec
+                    .contains(&accounts.django),
+                true
+            );
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools
+                    .get(&accounts.django)
+                    .is_some(),
+                true
+            );
+            // when multiple pools are provided
+            // * it adds pools that haven't been added already
+            az_trading_competition
+                .add_pools(vec![accounts.django, accounts.alice])
+                .unwrap();
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools_vec
+                    .contains(&accounts.alice),
+                true
+            );
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools
+                    .get(&accounts.alice)
+                    .is_some(),
+                true
+            );
+            // * it ignores the pools have already been added
+            assert_eq!(
+                az_trading_competition
+                    .allowed_pools_vec
+                    .contains(&accounts.django),
+                true
+            );
+            assert_eq!(az_trading_competition.allowed_pools_vec.len(), 2);
         }
     }
 }
