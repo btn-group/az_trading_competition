@@ -26,6 +26,7 @@ mod az_trading_competition {
         allowed_pools_vec: Vec<AccountId>,
         entry_fee_token: AccountId,
         entry_fee_amount: Balance,
+        oracle: AccountId,
     }
 
     // === CONTRACT ===
@@ -40,6 +41,7 @@ mod az_trading_competition {
         entry_fee_token: AccountId,
         entry_fee_amount: Balance,
         token_users: Mapping<(AccountId, AccountId), Balance>,
+        oracle: AccountId,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
@@ -49,6 +51,7 @@ mod az_trading_competition {
             router: AccountId,
             entry_fee_token: AccountId,
             entry_fee_amount: Balance,
+            oracle: AccountId,
         ) -> Self {
             Self {
                 admin: Self::env().caller(),
@@ -60,6 +63,7 @@ mod az_trading_competition {
                 entry_fee_token,
                 entry_fee_amount,
                 token_users: Mapping::default(),
+                oracle,
             }
         }
 
@@ -74,6 +78,7 @@ mod az_trading_competition {
                 allowed_pools_vec: self.allowed_pools_vec.clone(),
                 entry_fee_token: self.entry_fee_token,
                 entry_fee_amount: self.entry_fee_amount,
+                oracle: self.oracle,
             }
         }
 
@@ -194,6 +199,7 @@ mod az_trading_competition {
                 mock_router_address(),
                 mock_entry_fee_token(),
                 MOCK_ENTRY_FEE_AMOUNT,
+                mock_oracle_address(),
             );
             (accounts, az_trading_competition)
         }
@@ -206,6 +212,11 @@ mod az_trading_competition {
         fn mock_router_address() -> AccountId {
             let accounts: DefaultAccounts<DefaultEnvironment> = default_accounts();
             accounts.django
+        }
+
+        fn mock_oracle_address() -> AccountId {
+            let accounts: DefaultAccounts<DefaultEnvironment> = default_accounts();
+            accounts.frank
         }
 
         // === TEST QUERIES ===
@@ -225,6 +236,7 @@ mod az_trading_competition {
             );
             assert_eq!(config.entry_fee_token, mock_entry_fee_token());
             assert_eq!(config.entry_fee_amount, MOCK_ENTRY_FEE_AMOUNT);
+            assert_eq!(config.oracle, mock_oracle_address());
         }
 
         // === TEST HANDLES ===
