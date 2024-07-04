@@ -5,8 +5,12 @@ mod errors;
 #[ink::contract]
 mod az_trading_competition {
     use crate::errors::AzTradingCompetitionError;
-    use ink::prelude::{vec, vec::Vec};
-    use ink::storage::Mapping;
+    use ink::{
+        env::CallFlags,
+        prelude::{string::ToString, vec, vec::Vec},
+        storage::Mapping,
+    };
+    use openbrush::contracts::psp22::PSP22Ref;
 
     // === TYPES ===
     type Result<T> = core::result::Result<T, AzTradingCompetitionError>;
@@ -35,8 +39,8 @@ mod az_trading_competition {
         allowed_pools_vec: Vec<AccountId>,
         entry_fee_token: AccountId,
         entry_fee_amount: Balance,
+        token_users: Mapping<(AccountId, AccountId), Balance>,
     }
-
     impl AzTradingCompetition {
         #[ink(constructor)]
         pub fn new(
@@ -55,6 +59,7 @@ mod az_trading_competition {
                 allowed_pools_vec: vec![],
                 entry_fee_token,
                 entry_fee_amount,
+                token_users: Mapping::default(),
             }
         }
 
@@ -117,11 +122,35 @@ mod az_trading_competition {
             // 1. Check that time is before start
             self.competition_has_not_started()?;
             // 2. Check that user hasn't registered already
+            let caller: AccountId = Self::env().caller();
+            if self
+                .token_users
+                .get((self.entry_fee_token, caller))
+                .is_some()
+            {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Already registered".to_string(),
+                ));
+            }
+
+            // 3. Acquire token from caller
+            self.acquire_psp22(self.entry_fee_token, caller, self.entry_fee_amount)?;
+            // 4. Set balance of token users
+            self.token_users
+                .insert((self.entry_fee_token, caller), &self.entry_fee_amount);
 
             Ok(())
         }
 
         // === PRIVATE ===
+        fn acquire_psp22(&self, token: AccountId, from: AccountId, amount: Balance) -> Result<()> {
+            PSP22Ref::transfer_from_builder(&token, from, self.env().account_id(), amount, vec![])
+                .call_flags(CallFlags::default())
+                .invoke()?;
+
+            Ok(())
+        }
+
         fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
             if allowed != received {
                 return Err(AzTradingCompetitionError::Unauthorised);
@@ -288,6 +317,41 @@ mod az_trading_competition {
             // * it raises an error
             let result = az_trading_competition.remove_pools(vec![accounts.django, accounts.alice]);
             assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+        }
+
+        #[ink::test]
+        fn test_register() {
+            let (accounts, mut az_trading_competition) = init();
+
+            // when competition has started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                az_trading_competition.start,
+            );
+            // * it raises an error
+            let result = az_trading_competition.register();
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition has started".to_string(),
+                ))
+            );
+            // when competition has not started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                az_trading_competition.start - 1,
+            );
+            // = when user has registered already
+            az_trading_competition.token_users.insert(
+                (az_trading_competition.entry_fee_token, accounts.bob),
+                &az_trading_competition.entry_fee_amount,
+            );
+            // = * it raises an error
+            let result = az_trading_competition.register();
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Already registered".to_string(),
+                ))
+            );
         }
     }
 }
