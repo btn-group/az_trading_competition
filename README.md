@@ -17,6 +17,17 @@ AZERO/WETH: 5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE
 
 For the meanwhile, the best option is to select official sources for price that have an api for prices with time range.
 
+### Note about minting an NFT on registration
+
+Was thinking the easiest way to go about it would be to:
+1. create a collection on artzero
+2. Whitelist the trading competition smart contract
+3. Have the whitelist phase up until registration for trading competition ends
+4. Setup the trading competition smart contract to mint a nft everytime someone registers and then send it to the user.
+5. Rest of the collection will be made public after that.
+
+During whitelist phase, the price would be 0, then public whatever you reckon.
+
 ## Getting Started
 
 ### Prerequisites
@@ -63,3 +74,5 @@ substrate-contracts-node --dev
 - [Ink env block timestamp](https://docs.rs/ink_env/4.0.0/ink_env/fn.block_timestamp.html)
 - https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Date/getMilliseconds
 - [DIA Oracles on Aleph Zero](https://github.com/diadata-org/dia-oracle-anchor)
+- https://github.com/ArtZero-io/Contracts/tree/mainnet/Azero_Contracts/contracts
+- https://learn.brushfam.io/docs/OpenBrush/smart-contracts/PSP34/Extensions/metadata
