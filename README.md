@@ -28,6 +28,18 @@ Was thinking the easiest way to go about it would be to:
 
 During whitelist phase, the price would be 0, then public whatever you reckon.
 
+### Notes about Subsquid and multiple tournaments
+
+To show a leaderboard:
+- Need all the competitors and a tracking of their token balances.
+- Need the price from the DIA oracle.
+
+So that we don't have to start or modify a squid every time a tournament starts, it'd be best to have one contract instance that can control multiple tournaments.
+
+### Notes about adding and removing pools and admin functionality...
+
+With blockchain, you really want no admins and for it to be completely decentralised, and things should be built with that in mind where possible. At the same time, you want it to be some what flexible, allowing new tournaments to pick the pools that they want.
+
 ## Getting Started
 
 ### Prerequisites
