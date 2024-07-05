@@ -18,7 +18,7 @@ mod az_trading_competition {
 
     // === EVENTS ===
     #[ink(event)]
-    pub struct TournamentCreate {
+    pub struct CompetitionsCreate {
         #[ink(topic)]
         id: u64,
         start: Timestamp,
@@ -26,6 +26,13 @@ mod az_trading_competition {
         entry_fee_token: AccountId,
         entry_fee_amount: Balance,
         creator: AccountId,
+    }
+
+    #[ink(event)]
+    pub struct PoolsAdd {
+        #[ink(topic)]
+        id: u64,
+        pools: Vec<AccountId>,
     }
 
     // === CONSTANTS ===
@@ -39,7 +46,7 @@ mod az_trading_competition {
         pub admin: AccountId,
         pub router: AccountId,
         pub oracle: AccountId,
-        pub competition_count: u64,
+        pub competitions_count: u64,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -55,6 +62,7 @@ mod az_trading_competition {
         pub entry_fee_amount: Balance,
         pub allowed_pools_vec: Vec<AccountId>,
         pub creator: AccountId,
+        pub user_count: u64,
     }
 
     // === CONTRACT ===
@@ -64,7 +72,7 @@ mod az_trading_competition {
         router: AccountId,
         competition_allowed_pools: Mapping<(u64, AccountId), bool>,
         competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
-        competition_count: u64,
+        competitions_count: u64,
         competitions: Mapping<u64, Competition>,
         oracle: AccountId,
     }
@@ -76,7 +84,7 @@ mod az_trading_competition {
                 router,
                 competition_allowed_pools: Mapping::default(),
                 competition_token_users: Mapping::default(),
-                competition_count: 0,
+                competitions_count: 0,
                 competitions: Mapping::default(),
                 oracle,
             }
@@ -88,28 +96,70 @@ mod az_trading_competition {
             Config {
                 admin: self.admin,
                 router: self.router,
-                competition_count: self.competition_count,
+                competitions_count: self.competitions_count,
                 oracle: self.oracle,
             }
         }
 
-        // === HANDLES ===
         #[ink(message)]
-        pub fn create(
+        pub fn competitions_show(&self, id: u64) -> Result<Competition> {
+            self.competitions
+                .get(id)
+                .ok_or(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+        }
+
+        // === HANDLES ===
+        // Go through pools
+        // check if pool is in allowed_pools
+        // if not, add to allowed_pools_vec and allowed_pools
+        #[ink(message)]
+        pub fn pools_add(&mut self, id: u64, pools: Vec<AccountId>) -> Result<Competition> {
+            let mut competition: Competition = self.competitions_show(id)?;
+            if competition.user_count > 0 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Pools can't be added when registrations are present.".to_string(),
+                ));
+            }
+            Self::authorise(competition.creator, Self::env().caller())?;
+
+            for pool in pools.iter() {
+                if self.competition_allowed_pools.get((id, pool)).is_none() {
+                    competition.allowed_pools_vec.push(*pool);
+                    self.competition_allowed_pools.insert((id, pool), &true);
+                }
+            }
+            self.competitions.insert(competition.id, &competition);
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::PoolsAdd(PoolsAdd {
+                    id: competition.id,
+                    pools,
+                }),
+            );
+
+            Ok(competition)
+        }
+
+        #[ink(message)]
+        pub fn competitions_create(
             &mut self,
             start: Timestamp,
             end: Timestamp,
             entry_fee_token: AccountId,
             entry_fee_amount: Balance,
         ) -> Result<Competition> {
-            if self.competition_count == u64::MAX {
+            if self.competitions_count == u64::MAX {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Max number of tournaments reached.".to_string(),
+                    "Max number of competitions reached.".to_string(),
                 ));
             }
             if end < start + MINIMUM_DURATION {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(format!(
-                    "Tournament must run a minimum duration of {MINIMUM_DURATION}ms."
+                    "Competition must run a minimum duration of {MINIMUM_DURATION}ms."
                 )));
             }
             if entry_fee_amount == 0 {
@@ -119,22 +169,23 @@ mod az_trading_competition {
             }
 
             let competition: Competition = Competition {
-                id: self.competition_count,
+                id: self.competitions_count,
                 start,
                 end,
                 entry_fee_token,
                 entry_fee_amount,
                 allowed_pools_vec: vec![],
                 creator: Self::env().caller(),
+                user_count: 0,
             };
             self.competitions
-                .insert(self.competition_count, &competition);
-            self.competition_count += 1;
+                .insert(self.competitions_count, &competition);
+            self.competitions_count += 1;
 
             // emit event
             Self::emit_event(
                 self.env(),
-                Event::TournamentCreate(TournamentCreate {
+                Event::CompetitionsCreate(CompetitionsCreate {
                     id: competition.id,
                     start: competition.start,
                     end: competition.end,
@@ -145,6 +196,15 @@ mod az_trading_competition {
             );
 
             Ok(competition)
+        }
+
+        // === PRIVATE ===
+        fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
+            if allowed != received {
+                return Err(AzTradingCompetitionError::Unauthorised);
+            }
+
+            Ok(())
         }
 
         fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
@@ -202,13 +262,13 @@ mod az_trading_competition {
 
         // === TEST HANDLES ===
         #[ink::test]
-        fn test_create() {
+        fn test_competitions_create() {
             let (_accounts, mut az_trading_competition) = init();
 
-            // when competition_count is u64 max
-            az_trading_competition.competition_count = u64::MAX;
+            // when competitions_count is u64 max
+            az_trading_competition.competitions_count = u64::MAX;
             // * it raises an error
-            let result = az_trading_competition.create(
+            let result = az_trading_competition.competitions_create(
                 MOCK_START,
                 MOCK_END,
                 mock_entry_fee_token(),
@@ -217,13 +277,13 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Max number of tournaments reached.".to_string(),
+                    "Max number of competitions reached.".to_string(),
                 ))
             );
-            // when competition_count is less than u64 max
-            az_trading_competition.competition_count = u64::MAX - 1;
+            // when competitions_count is less than u64 max
+            az_trading_competition.competitions_count = u64::MAX - 1;
             // = when duration is less than or equal to MINIMUM_DURATION
-            let result = az_trading_competition.create(
+            let result = az_trading_competition.competitions_create(
                 MOCK_START,
                 MOCK_START + MINIMUM_DURATION - 1,
                 mock_entry_fee_token(),
@@ -233,12 +293,12 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(format!(
-                    "Tournament must run a minimum duration of {MINIMUM_DURATION}ms."
+                    "Competition must run a minimum duration of {MINIMUM_DURATION}ms."
                 )))
             );
             // = when duration is greater than MINIMUM_DURATION
             // == when fee amount is zero
-            let result = az_trading_competition.create(
+            let result = az_trading_competition.competitions_create(
                 MOCK_START,
                 MOCK_START + MINIMUM_DURATION,
                 mock_entry_fee_token(),
@@ -252,9 +312,9 @@ mod az_trading_competition {
                 ))
             );
             // == when fee amount is positive
-            let competition_count: u64 = az_trading_competition.competition_count;
+            let competitions_count: u64 = az_trading_competition.competitions_count;
             az_trading_competition
-                .create(
+                .competitions_create(
                     MOCK_START,
                     MOCK_START + MINIMUM_DURATION,
                     mock_entry_fee_token(),
@@ -265,15 +325,104 @@ mod az_trading_competition {
             assert_eq!(
                 az_trading_competition
                     .competitions
-                    .get(&competition_count)
+                    .get(&competitions_count)
                     .is_some(),
                 true
             );
-            // == * it increases the competition_count by 1
+            // == * it increases the competitions_count by 1
             assert_eq!(
-                az_trading_competition.competition_count,
-                competition_count + 1
+                az_trading_competition.competitions_count,
+                competitions_count + 1
             );
+        }
+
+        #[ink::test]
+        fn test_pools_add() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.pools_add(0, vec![accounts.django]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                )
+                .unwrap();
+            // = when competition has registrants
+            let mut competition: Competition = az_trading_competition.competitions_show(0).unwrap();
+            competition.user_count = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // = * it raises an error
+            let result = az_trading_competition.pools_add(0, vec![accounts.django]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Pools can't be added when registrations are present.".to_string(),
+                ))
+            );
+            // = when competition has no registrants
+            competition.user_count = 0;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // == when called by a non-creator of the competition
+            set_caller::<DefaultEnvironment>(accounts.django);
+            // == * it raises an error
+            let result = az_trading_competition.pools_add(0, vec![accounts.django]);
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+            // == when called by the creator of the competition
+            set_caller::<DefaultEnvironment>(competition.creator);
+            // === when pool is not in allowed_pools
+            // === * it adds pools to allowed_pools and allowed_pools_vec
+            az_trading_competition
+                .pools_add(0, vec![accounts.django])
+                .unwrap();
+            competition = az_trading_competition.competitions_show(0).unwrap();
+            assert_eq!(
+                competition.allowed_pools_vec.contains(&accounts.django),
+                true
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_allowed_pools
+                    .get(&(0, accounts.django))
+                    .is_some(),
+                true
+            );
+            // === when multiple pools are provided
+            // === * it adds pools that haven't been added already
+            az_trading_competition
+                .pools_add(0, vec![accounts.django, accounts.alice])
+                .unwrap();
+            competition = az_trading_competition.competitions_show(0).unwrap();
+            assert_eq!(
+                competition.allowed_pools_vec.contains(&accounts.alice),
+                true
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_allowed_pools
+                    .get(&(0, accounts.alice))
+                    .is_some(),
+                true
+            );
+            // === * it ignores the pools have already been added
+            assert_eq!(
+                competition.allowed_pools_vec.contains(&accounts.django),
+                true
+            );
+            assert_eq!(competition.allowed_pools_vec.len(), 2);
         }
     }
 }
