@@ -32,20 +32,6 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
-    pub struct PoolsAdd {
-        #[ink(topic)]
-        id: u64,
-        pools: Vec<AccountId>,
-    }
-
-    #[ink(event)]
-    pub struct PoolsRemove {
-        #[ink(topic)]
-        id: u64,
-        pools: Vec<AccountId>,
-    }
-
-    #[ink(event)]
     pub struct Register {
         #[ink(topic)]
         id: u64,
@@ -53,6 +39,11 @@ mod az_trading_competition {
     }
 
     // === CONSTANTS ===
+    const ALLOWED_POOLS: &[&str] = &[
+        "5C6s2qJAG5dCmPvR9WyKAVL6vJRDS9BjMwbrqwXGCsPiFViF",
+        "5CiP96MhEGHnLFGS64uVznrwbuVdFj6kewrEZoLRzxUEqxws",
+        "5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE",
+    ];
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
 
@@ -85,6 +76,7 @@ mod az_trading_competition {
         pub oracle: AccountId,
         pub competitions_count: u64,
         pub dia_price_symbols_vec: Vec<(AccountId, String)>,
+        pub allowed_pools_vec: Vec<AccountId>,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -98,7 +90,6 @@ mod az_trading_competition {
         pub end: Timestamp,
         pub entry_fee_token: AccountId,
         pub entry_fee_amount: Balance,
-        pub allowed_pools_vec: Vec<AccountId>,
         pub creator: AccountId,
         pub user_count: u64,
     }
@@ -108,12 +99,12 @@ mod az_trading_competition {
     pub struct AzTradingCompetition {
         admin: AccountId,
         router: AccountId,
-        competition_allowed_pools: Mapping<(u64, AccountId), bool>,
         competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
         competitions_count: u64,
         competitions: Mapping<u64, Competition>,
         oracle: AccountId,
         dia_price_symbols: Mapping<AccountId, String>,
+        allowed_pools: Mapping<AccountId, bool>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
@@ -121,18 +112,22 @@ mod az_trading_competition {
             let mut x = Self {
                 admin: Self::env().caller(),
                 router,
-                competition_allowed_pools: Mapping::default(),
                 competition_token_users: Mapping::default(),
                 competitions_count: 0,
                 competitions: Mapping::default(),
                 oracle,
                 dia_price_symbols: Mapping::default(),
+                allowed_pools: Mapping::default(),
             };
             for token_dia_price_symbol_combo in TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS.iter() {
                 x.dia_price_symbols.insert(
                     Self::convert_string_to_account_id(token_dia_price_symbol_combo.0),
                     &token_dia_price_symbol_combo.1.to_string(),
                 );
+            }
+            for pool in ALLOWED_POOLS.iter() {
+                x.allowed_pools
+                    .insert(Self::convert_string_to_account_id(pool), &true);
             }
             x
         }
@@ -153,6 +148,10 @@ mod az_trading_competition {
                             token_dia_price_symbol_combo.1.to_string(),
                         )
                     })
+                    .collect(),
+                allowed_pools_vec: ALLOWED_POOLS
+                    .iter()
+                    .map(|pool| Self::convert_string_to_account_id(pool))
                     .collect(),
             }
         }
@@ -202,7 +201,6 @@ mod az_trading_competition {
                 end,
                 entry_fee_token,
                 entry_fee_amount,
-                allowed_pools_vec: vec![],
                 creator: Self::env().caller(),
                 user_count: 0,
             };
@@ -224,77 +222,6 @@ mod az_trading_competition {
             );
 
             Ok(competition)
-        }
-
-        // Go through pools
-        // check if pool is in allowed_pools
-        // if not, add to allowed_pools_vec and allowed_pools
-        #[ink(message)]
-        pub fn pools_add(&mut self, id: u64, pools: Vec<AccountId>) -> Result<Competition> {
-            let mut competition: Competition = self.competitions_show(id)?;
-            if competition.user_count > 0 {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Pools can't be added when registrations are present.".to_string(),
-                ));
-            }
-            Self::authorise(competition.creator, Self::env().caller())?;
-
-            for pool in pools.iter() {
-                if self.competition_allowed_pools.get((id, pool)).is_none() {
-                    competition.allowed_pools_vec.push(*pool);
-                    self.competition_allowed_pools.insert((id, pool), &true);
-                }
-            }
-            self.competitions.insert(competition.id, &competition);
-
-            // emit event
-            Self::emit_event(
-                self.env(),
-                Event::PoolsAdd(PoolsAdd {
-                    id: competition.id,
-                    pools,
-                }),
-            );
-
-            Ok(competition)
-        }
-
-        // Go through pools
-        // check if pool is in allowed_pools
-        // if so, remove from allowed_pools_vec and allowed_pools
-        #[ink(message)]
-        pub fn pools_remove(&mut self, id: u64, pools: Vec<AccountId>) -> Result<()> {
-            let mut competition: Competition = self.competitions_show(id)?;
-            if competition.user_count > 0 {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Pools can't be removed when registrations are present.".to_string(),
-                ));
-            }
-            Self::authorise(competition.creator, Self::env().caller())?;
-
-            for pool in pools.iter() {
-                if self.competition_allowed_pools.get((id, pool)).is_some() {
-                    let index = competition
-                        .allowed_pools_vec
-                        .iter()
-                        .position(|x| x == pool)
-                        .unwrap();
-                    competition.allowed_pools_vec.remove(index);
-                    self.competition_allowed_pools.remove((id, pool));
-                }
-            }
-            self.competitions.insert(competition.id, &competition);
-
-            // emit event
-            Self::emit_event(
-                self.env(),
-                Event::PoolsRemove(PoolsRemove {
-                    id: competition.id,
-                    pools,
-                }),
-            );
-
-            Ok(())
         }
 
         #[ink(message)]
@@ -340,14 +267,6 @@ mod az_trading_competition {
             PSP22Ref::transfer_from_builder(&token, from, self.env().account_id(), amount, vec![])
                 .call_flags(CallFlags::default())
                 .invoke()?;
-
-            Ok(())
-        }
-
-        fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
-            if allowed != received {
-                return Err(AzTradingCompetitionError::Unauthorised);
-            }
 
             Ok(())
         }
@@ -435,6 +354,13 @@ mod az_trading_competition {
                         ),
                         token_dia_price_symbol_combo.1.to_string()
                     ))
+                    .collect::<Vec<_>>()
+            );
+            assert_eq!(
+                config.allowed_pools_vec,
+                ALLOWED_POOLS
+                    .iter()
+                    .map(|pool| AzTradingCompetition::convert_string_to_account_id(pool))
                     .collect::<Vec<_>>()
             );
         }
@@ -531,167 +457,11 @@ mod az_trading_competition {
         }
 
         #[ink::test]
-        fn test_pools_add() {
-            let (accounts, mut az_trading_competition) = init();
-            // when competition does not exist
-            // * it raises an error
-            let result = az_trading_competition.pools_add(0, vec![accounts.django]);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::NotFound(
-                    "Competition".to_string(),
-                ))
-            );
-            // when competition exist
-            az_trading_competition
-                .competitions_create(
-                    MOCK_START,
-                    MOCK_START + MINIMUM_DURATION,
-                    mock_entry_fee_token(),
-                    MOCK_ENTRY_FEE_AMOUNT,
-                )
-                .unwrap();
-            // = when competition has registrants
-            let mut competition: Competition = az_trading_competition.competitions_show(0).unwrap();
-            competition.user_count = 1;
-            az_trading_competition
-                .competitions
-                .insert(competition.id, &competition);
-            // = * it raises an error
-            let result = az_trading_competition.pools_add(0, vec![accounts.django]);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Pools can't be added when registrations are present.".to_string(),
-                ))
-            );
-            // = when competition has no registrants
-            competition.user_count = 0;
-            az_trading_competition
-                .competitions
-                .insert(competition.id, &competition);
-            // == when called by a non-creator of the competition
-            set_caller::<DefaultEnvironment>(accounts.django);
-            // == * it raises an error
-            let result = az_trading_competition.pools_add(0, vec![accounts.django]);
-            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
-            // == when called by the creator of the competition
-            set_caller::<DefaultEnvironment>(competition.creator);
-            // === when pool is not in allowed_pools
-            // === * it adds pools to allowed_pools and allowed_pools_vec
-            az_trading_competition
-                .pools_add(0, vec![accounts.django])
-                .unwrap();
-            competition = az_trading_competition.competitions_show(0).unwrap();
-            assert_eq!(
-                competition.allowed_pools_vec.contains(&accounts.django),
-                true
-            );
-            assert_eq!(
-                az_trading_competition
-                    .competition_allowed_pools
-                    .get(&(0, accounts.django))
-                    .is_some(),
-                true
-            );
-            // === when multiple pools are provided
-            // === * it adds pools that haven't been added already
-            az_trading_competition
-                .pools_add(0, vec![accounts.django, accounts.alice])
-                .unwrap();
-            competition = az_trading_competition.competitions_show(0).unwrap();
-            assert_eq!(
-                competition.allowed_pools_vec.contains(&accounts.alice),
-                true
-            );
-            assert_eq!(
-                az_trading_competition
-                    .competition_allowed_pools
-                    .get(&(0, accounts.alice))
-                    .is_some(),
-                true
-            );
-            // === * it ignores the pools have already been added
-            assert_eq!(
-                competition.allowed_pools_vec.contains(&accounts.django),
-                true
-            );
-            assert_eq!(competition.allowed_pools_vec.len(), 2);
-        }
-
-        #[ink::test]
-        fn test_pools_remove() {
-            let (accounts, mut az_trading_competition) = init();
-            // when competition does not exist
-            // * it raises an error
-            let result = az_trading_competition.pools_remove(0, vec![accounts.django]);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::NotFound(
-                    "Competition".to_string(),
-                ))
-            );
-            // when competition exist
-            az_trading_competition
-                .competitions_create(
-                    MOCK_START,
-                    MOCK_START + MINIMUM_DURATION,
-                    mock_entry_fee_token(),
-                    MOCK_ENTRY_FEE_AMOUNT,
-                )
-                .unwrap();
-            // = when competition has registrants
-            let mut competition: Competition = az_trading_competition.competitions_show(0).unwrap();
-            competition.user_count = 1;
-            az_trading_competition
-                .competitions
-                .insert(competition.id, &competition);
-            // = * it raises an error
-            let result = az_trading_competition.pools_remove(0, vec![accounts.django]);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Pools can't be removed when registrations are present.".to_string(),
-                ))
-            );
-            // = when competition has no registrants
-            competition.user_count = 0;
-            az_trading_competition
-                .competitions
-                .insert(competition.id, &competition);
-            // == when called by a non-creator of the competition
-            set_caller::<DefaultEnvironment>(accounts.django);
-            // == * it raises an error
-            let result = az_trading_competition.pools_remove(0, vec![accounts.django]);
-            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
-            // == when called by the creator of the competition
-            set_caller::<DefaultEnvironment>(competition.creator);
-            // === when pool is in allowed pools
-            az_trading_competition
-                .pools_add(0, vec![accounts.django, accounts.alice])
-                .unwrap();
-            az_trading_competition
-                .pools_remove(0, vec![accounts.django])
-                .unwrap();
-            // === * it removes the pool from competition_allowed_pools
-            assert_eq!(
-                az_trading_competition
-                    .competition_allowed_pools
-                    .get((0, accounts.django))
-                    .is_none(),
-                true
-            );
-            // === * it removes the pool from competition.allowed_pools_vec
-            competition = az_trading_competition.competitions_show(0).unwrap();
-            assert_eq!(competition.allowed_pools_vec, vec![accounts.alice])
-        }
-
-        #[ink::test]
         fn test_register() {
             let (accounts, mut az_trading_competition) = init();
             // when competition does not exist
             // * it raises an error
-            let result = az_trading_competition.pools_remove(0, vec![accounts.django]);
+            let result = az_trading_competition.register(0);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::NotFound(
