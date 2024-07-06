@@ -83,6 +83,7 @@ mod az_trading_competition {
         pub router: AccountId,
         pub oracle: AccountId,
         pub competitions_count: u64,
+        pub dia_price_symbols_vec: Vec<(String, String)>,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -111,11 +112,12 @@ mod az_trading_competition {
         competitions_count: u64,
         competitions: Mapping<u64, Competition>,
         oracle: AccountId,
+        dia_price_symbols: Mapping<String, String>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
         pub fn new(router: AccountId, oracle: AccountId) -> Self {
-            Self {
+            let mut x = Self {
                 admin: Self::env().caller(),
                 router,
                 competition_allowed_pools: Mapping::default(),
@@ -123,7 +125,15 @@ mod az_trading_competition {
                 competitions_count: 0,
                 competitions: Mapping::default(),
                 oracle,
+                dia_price_symbols: Mapping::default(),
+            };
+            for token_dia_price_symbol_combo in TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL.iter() {
+                x.dia_price_symbols.insert(
+                    token_dia_price_symbol_combo.0.to_string(),
+                    &token_dia_price_symbol_combo.1.to_string(),
+                );
             }
+            x
         }
 
         // === QUERIES ===
@@ -134,6 +144,10 @@ mod az_trading_competition {
                 router: self.router,
                 competitions_count: self.competitions_count,
                 oracle: self.oracle,
+                dia_price_symbols_vec: TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL
+                    .iter()
+                    .map(|x| (x.0.to_string(), x.1.to_string()))
+                    .collect(),
             }
         }
 
@@ -144,21 +158,6 @@ mod az_trading_competition {
                 .ok_or(AzTradingCompetitionError::NotFound(
                     "Competition".to_string(),
                 ))
-        }
-
-        #[ink(message)]
-        pub fn dia_price_symbol(&self, key: String) -> Result<String> {
-            let result = TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL.binary_search_by(|(k, _)| k.cmp(&&*key));
-            if result.is_err() {
-                Err(AzTradingCompetitionError::NotFound(
-                    "DIAPriceSymbol".to_string(),
-                ))
-            } else {
-                Ok(result
-                    .map(|x| TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL[x].1)
-                    .unwrap()
-                    .to_string())
-            }
         }
 
         // === HANDLES ===
@@ -403,27 +402,13 @@ mod az_trading_competition {
             assert_eq!(config.admin, az_trading_competition.admin);
             assert_eq!(config.router, az_trading_competition.router);
             assert_eq!(config.oracle, mock_oracle_address());
-        }
-
-        #[ink::test]
-        fn test_dia_price_symbol() {
-            let (_accounts, az_trading_competition) = init();
-            // when combo doesn't exist
-            let result = az_trading_competition
-                .dia_price_symbol("5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXg".to_string());
-            // * it raises an error
             assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::NotFound(
-                    "DIAPriceSymbol".to_string(),
-                ))
+                config.dia_price_symbols_vec,
+                TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL
+                    .iter()
+                    .map(|x| (x.0.to_string(), x.1.to_string()))
+                    .collect::<Vec<_>>()
             );
-            // when combo exists
-            // * it return the DIA price symbol
-            let result: String = az_trading_competition
-                .dia_price_symbol("5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg".to_string())
-                .unwrap();
-            assert_eq!(result, "AZERO/USD");
         }
 
         // === TEST HANDLES ===
