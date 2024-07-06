@@ -55,6 +55,26 @@ mod az_trading_competition {
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
 
+    // === STATICS ===
+    static TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL: &[(&str, &str)] = &[
+        (
+            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+            "AZERO/USD",
+        ),
+        (
+            "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
+            "ETH/USD",
+        ),
+        (
+            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
+            "USDC/USD",
+        ),
+        (
+            "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
+            "USDT/USD",
+        ),
+    ];
+
     // === STRUCTS ===
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
@@ -124,6 +144,21 @@ mod az_trading_competition {
                 .ok_or(AzTradingCompetitionError::NotFound(
                     "Competition".to_string(),
                 ))
+        }
+
+        #[ink(message)]
+        pub fn dia_price_symbol(&self, key: String) -> Result<String> {
+            let result = TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL.binary_search_by(|(k, _)| k.cmp(&&*key));
+            if result.is_err() {
+                Err(AzTradingCompetitionError::NotFound(
+                    "DIAPriceSymbol".to_string(),
+                ))
+            } else {
+                Ok(result
+                    .map(|x| TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL[x].1)
+                    .unwrap()
+                    .to_string())
+            }
         }
 
         // === HANDLES ===
@@ -368,6 +403,27 @@ mod az_trading_competition {
             assert_eq!(config.admin, az_trading_competition.admin);
             assert_eq!(config.router, az_trading_competition.router);
             assert_eq!(config.oracle, mock_oracle_address());
+        }
+
+        #[ink::test]
+        fn test_dia_price_symbol() {
+            let (_accounts, az_trading_competition) = init();
+            // when combo doesn't exist
+            let result = az_trading_competition
+                .dia_price_symbol("5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXg".to_string());
+            // * it raises an error
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "DIAPriceSymbol".to_string(),
+                ))
+            );
+            // when combo exists
+            // * it return the DIA price symbol
+            let result: String = az_trading_competition
+                .dia_price_symbol("5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg".to_string())
+                .unwrap();
+            assert_eq!(result, "AZERO/USD");
         }
 
         // === TEST HANDLES ===
