@@ -7,10 +7,12 @@ mod az_trading_competition {
     use crate::errors::AzTradingCompetitionError;
     use ink::{
         codegen::EmitEvent,
+        env::CallFlags,
         prelude::{string::ToString, vec, vec::Vec},
         reflect::ContractEventBase,
         storage::Mapping,
     };
+    use openbrush::contracts::psp22::PSP22Ref;
 
     // === TYPES ===
     type Event = <AzTradingCompetition as ContractEventBase>::Type;
@@ -40,6 +42,13 @@ mod az_trading_competition {
         #[ink(topic)]
         id: u64,
         pools: Vec<AccountId>,
+    }
+
+    #[ink(event)]
+    pub struct Register {
+        #[ink(topic)]
+        id: u64,
+        user: AccountId,
     }
 
     // === CONSTANTS ===
@@ -118,6 +127,60 @@ mod az_trading_competition {
         }
 
         // === HANDLES ===
+        #[ink(message)]
+        pub fn competitions_create(
+            &mut self,
+            start: Timestamp,
+            end: Timestamp,
+            entry_fee_token: AccountId,
+            entry_fee_amount: Balance,
+        ) -> Result<Competition> {
+            if self.competitions_count == u64::MAX {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Max number of competitions reached.".to_string(),
+                ));
+            }
+            if end < start + MINIMUM_DURATION {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(format!(
+                    "Competition must run a minimum duration of {MINIMUM_DURATION}ms."
+                )));
+            }
+            if entry_fee_amount == 0 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Entry fee amount must be positive".to_string(),
+                ));
+            }
+
+            let competition: Competition = Competition {
+                id: self.competitions_count,
+                start,
+                end,
+                entry_fee_token,
+                entry_fee_amount,
+                allowed_pools_vec: vec![],
+                creator: Self::env().caller(),
+                user_count: 0,
+            };
+            self.competitions
+                .insert(self.competitions_count, &competition);
+            self.competitions_count += 1;
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::CompetitionsCreate(CompetitionsCreate {
+                    id: competition.id,
+                    start: competition.start,
+                    end: competition.end,
+                    entry_fee_token: competition.entry_fee_token,
+                    entry_fee_amount: competition.entry_fee_amount,
+                    creator: Self::env().caller(),
+                }),
+            );
+
+            Ok(competition)
+        }
+
         // Go through pools
         // check if pool is in allowed_pools
         // if not, add to allowed_pools_vec and allowed_pools
@@ -190,63 +253,65 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn competitions_create(
-            &mut self,
-            start: Timestamp,
-            end: Timestamp,
-            entry_fee_token: AccountId,
-            entry_fee_amount: Balance,
-        ) -> Result<Competition> {
-            if self.competitions_count == u64::MAX {
+        pub fn register(&mut self, id: u64) -> Result<()> {
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 1. Check that time is before start
+            self.competition_has_not_started(competition.start)?;
+            // 2. Check that user hasn't registered already
+            let caller: AccountId = Self::env().caller();
+            if self
+                .competition_token_users
+                .get((id, competition.entry_fee_token, caller))
+                .is_some()
+            {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Max number of competitions reached.".to_string(),
-                ));
-            }
-            if end < start + MINIMUM_DURATION {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(format!(
-                    "Competition must run a minimum duration of {MINIMUM_DURATION}ms."
-                )));
-            }
-            if entry_fee_amount == 0 {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Entry fee amount must be positive".to_string(),
+                    "Already registered".to_string(),
                 ));
             }
 
-            let competition: Competition = Competition {
-                id: self.competitions_count,
-                start,
-                end,
-                entry_fee_token,
-                entry_fee_amount,
-                allowed_pools_vec: vec![],
-                creator: Self::env().caller(),
-                user_count: 0,
-            };
-            self.competitions
-                .insert(self.competitions_count, &competition);
-            self.competitions_count += 1;
+            // 3. Acquire token from caller
+            self.acquire_psp22(
+                competition.entry_fee_token,
+                caller,
+                competition.entry_fee_amount,
+            )?;
+            // 4. Set balance of token users
+            self.competition_token_users.insert(
+                (id, competition.entry_fee_token, caller),
+                &competition.entry_fee_amount,
+            );
+            // 5. Increase competition.user_count
+            competition.user_count += 1;
+            self.competitions.insert(competition.id, &competition);
 
             // emit event
-            Self::emit_event(
-                self.env(),
-                Event::CompetitionsCreate(CompetitionsCreate {
-                    id: competition.id,
-                    start: competition.start,
-                    end: competition.end,
-                    entry_fee_token: competition.entry_fee_token,
-                    entry_fee_amount: competition.entry_fee_amount,
-                    creator: Self::env().caller(),
-                }),
-            );
+            Self::emit_event(self.env(), Event::Register(Register { id, user: caller }));
 
-            Ok(competition)
+            Ok(())
         }
 
         // === PRIVATE ===
+        fn acquire_psp22(&self, token: AccountId, from: AccountId, amount: Balance) -> Result<()> {
+            PSP22Ref::transfer_from_builder(&token, from, self.env().account_id(), amount, vec![])
+                .call_flags(CallFlags::default())
+                .invoke()?;
+
+            Ok(())
+        }
+
         fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
             if allowed != received {
                 return Err(AzTradingCompetitionError::Unauthorised);
+            }
+
+            Ok(())
+        }
+
+        fn competition_has_not_started(&self, start: Timestamp) -> Result<()> {
+            if Self::env().block_timestamp() >= start {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition has started".to_string(),
+                ));
             }
 
             Ok(())
@@ -535,6 +600,56 @@ mod az_trading_competition {
             // === * it removes the pool from competition.allowed_pools_vec
             competition = az_trading_competition.competitions_show(0).unwrap();
             assert_eq!(competition.allowed_pools_vec, vec![accounts.alice])
+        }
+
+        #[ink::test]
+        fn test_register() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.pools_remove(0, vec![accounts.django]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                )
+                .unwrap();
+
+            // when competition has started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
+            // * it raises an error
+            let result = az_trading_competition.register(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition has started".to_string(),
+                ))
+            );
+            // when competition has not started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
+            // = when user has registered already
+            az_trading_competition.competition_token_users.insert(
+                (0, mock_entry_fee_token(), accounts.bob),
+                &MOCK_ENTRY_FEE_AMOUNT,
+            );
+            // = * it raises an error
+            let result = az_trading_competition.register(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Already registered".to_string(),
+                ))
+            );
+            // == the rest needs to be done in integration tests
         }
     }
 }
