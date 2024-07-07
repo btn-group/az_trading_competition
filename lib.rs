@@ -492,6 +492,21 @@ mod az_trading_competition {
             );
             // == when fee amount is positive
             let competitions_count: u64 = az_trading_competition.competitions_count;
+            // === when fee token doesn't have a dia price symbol
+            let result = az_trading_competition.competitions_create(
+                MOCK_START,
+                MOCK_START + MINIMUM_DURATION,
+                mock_oracle_address(),
+                MOCK_ENTRY_FEE_AMOUNT,
+            );
+            // === * it raises an error
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Entry fee token is not permitted.".to_string()
+                ))
+            );
+            // === when fee token has a dia price symbol
             az_trading_competition
                 .competitions_create(
                     MOCK_START,
@@ -500,7 +515,7 @@ mod az_trading_competition {
                     MOCK_ENTRY_FEE_AMOUNT,
                 )
                 .unwrap();
-            // == * it stores the competition
+            // === * it stores the competition
             assert_eq!(
                 az_trading_competition
                     .competitions
@@ -508,7 +523,7 @@ mod az_trading_competition {
                     .is_some(),
                 true
             );
-            // == * it increases the competitions_count by 1
+            // === * it increases the competitions_count by 1
             assert_eq!(
                 az_trading_competition.competitions_count,
                 competitions_count + 1
