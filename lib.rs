@@ -5,6 +5,7 @@ mod errors;
 #[ink::contract]
 mod az_trading_competition {
     use crate::errors::AzTradingCompetitionError;
+    use bs58;
     use ink::{
         codegen::EmitEvent,
         env::CallFlags,
@@ -56,7 +57,7 @@ mod az_trading_competition {
     const MINIMUM_DURATION: Timestamp = 3_600_000;
 
     // === STATICS ===
-    static TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL: &[(&str, &str)] = &[
+    static TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS: &[(&str, &str)] = &[
         (
             "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
             "AZERO/USD",
@@ -83,6 +84,7 @@ mod az_trading_competition {
         pub router: AccountId,
         pub oracle: AccountId,
         pub competitions_count: u64,
+        pub dia_price_symbols_vec: Vec<(AccountId, String)>,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -111,11 +113,12 @@ mod az_trading_competition {
         competitions_count: u64,
         competitions: Mapping<u64, Competition>,
         oracle: AccountId,
+        dia_price_symbols: Mapping<AccountId, String>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
         pub fn new(router: AccountId, oracle: AccountId) -> Self {
-            Self {
+            let mut x = Self {
                 admin: Self::env().caller(),
                 router,
                 competition_allowed_pools: Mapping::default(),
@@ -123,7 +126,15 @@ mod az_trading_competition {
                 competitions_count: 0,
                 competitions: Mapping::default(),
                 oracle,
+                dia_price_symbols: Mapping::default(),
+            };
+            for token_dia_price_symbol_combo in TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS.iter() {
+                x.dia_price_symbols.insert(
+                    Self::convert_string_to_account_id(token_dia_price_symbol_combo.0),
+                    &token_dia_price_symbol_combo.1.to_string(),
+                );
             }
+            x
         }
 
         // === QUERIES ===
@@ -134,6 +145,15 @@ mod az_trading_competition {
                 router: self.router,
                 competitions_count: self.competitions_count,
                 oracle: self.oracle,
+                dia_price_symbols_vec: TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS
+                    .iter()
+                    .map(|token_dia_price_symbol_combo| {
+                        (
+                            Self::convert_string_to_account_id(token_dia_price_symbol_combo.0),
+                            token_dia_price_symbol_combo.1.to_string(),
+                        )
+                    })
+                    .collect(),
             }
         }
 
@@ -144,21 +164,6 @@ mod az_trading_competition {
                 .ok_or(AzTradingCompetitionError::NotFound(
                     "Competition".to_string(),
                 ))
-        }
-
-        #[ink(message)]
-        pub fn dia_price_symbol(&self, key: String) -> Result<String> {
-            let result = TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL.binary_search_by(|(k, _)| k.cmp(&&*key));
-            if result.is_err() {
-                Err(AzTradingCompetitionError::NotFound(
-                    "DIAPriceSymbol".to_string(),
-                ))
-            } else {
-                Ok(result
-                    .map(|x| TOKEN_ADDRESS_TO_DIA_PRICE_SYMBOL[x].1)
-                    .unwrap()
-                    .to_string())
-            }
         }
 
         // === HANDLES ===
@@ -183,6 +188,11 @@ mod az_trading_competition {
             if entry_fee_amount == 0 {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Entry fee amount must be positive".to_string(),
+                ));
+            }
+            if self.dia_price_symbols.get(entry_fee_token).is_none() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Entry fee token is not permitted.".to_string(),
                 ));
             }
 
@@ -352,6 +362,17 @@ mod az_trading_competition {
             Ok(())
         }
 
+        fn convert_string_to_account_id(account_str: &str) -> AccountId {
+            let mut output = vec![0xFF; 35];
+            bs58::decode(account_str).onto(&mut output).unwrap();
+            let cut_address_vec: Vec<_> = output.drain(1..33).collect();
+            let mut array = [0; 32];
+            let bytes = &cut_address_vec[..array.len()];
+            array.copy_from_slice(bytes);
+            let account_id: AccountId = array.into();
+            account_id
+        }
+
         fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
             emitter.emit_event(event);
         }
@@ -380,8 +401,9 @@ mod az_trading_competition {
         }
 
         fn mock_entry_fee_token() -> AccountId {
-            let accounts: DefaultAccounts<DefaultEnvironment> = default_accounts();
-            accounts.eve
+            AzTradingCompetition::convert_string_to_account_id(
+                "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+            )
         }
 
         fn mock_router_address() -> AccountId {
@@ -403,27 +425,18 @@ mod az_trading_competition {
             assert_eq!(config.admin, az_trading_competition.admin);
             assert_eq!(config.router, az_trading_competition.router);
             assert_eq!(config.oracle, mock_oracle_address());
-        }
-
-        #[ink::test]
-        fn test_dia_price_symbol() {
-            let (_accounts, az_trading_competition) = init();
-            // when combo doesn't exist
-            let result = az_trading_competition
-                .dia_price_symbol("5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXg".to_string());
-            // * it raises an error
             assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::NotFound(
-                    "DIAPriceSymbol".to_string(),
-                ))
+                config.dia_price_symbols_vec,
+                TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS
+                    .iter()
+                    .map(|token_dia_price_symbol_combo| (
+                        AzTradingCompetition::convert_string_to_account_id(
+                            token_dia_price_symbol_combo.0
+                        ),
+                        token_dia_price_symbol_combo.1.to_string()
+                    ))
+                    .collect::<Vec<_>>()
             );
-            // when combo exists
-            // * it return the DIA price symbol
-            let result: String = az_trading_competition
-                .dia_price_symbol("5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg".to_string())
-                .unwrap();
-            assert_eq!(result, "AZERO/USD");
         }
 
         // === TEST HANDLES ===
