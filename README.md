@@ -1,12 +1,13 @@
 # Aleph Zero Trading Competition Smart Contract
 
-### Notes about allowed bools
+### Notes about allowed pools and tokens
 
-Only pools with large market caps will be allowed.
+- Only pools with large market caps will be allowed.
+- Each token in pools must have a DIA price symbol associated with it.
 
 AZERO/USDC: 5C6s2qJAG5dCmPvR9WyKAVL6vJRDS9BjMwbrqwXGCsPiFViF
 USDC/USDT: 5CiP96MhEGHnLFGS64uVznrwbuVdFj6kewrEZoLRzxUEqxws
-AZERO/WETH: 5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE
+AZERO/ETH: 5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE
 
 ### Note about DIA oracle for decentralising winner selection
 
@@ -14,8 +15,6 @@ AZERO/WETH: 5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE
 - Can't specify a time so it may have to come down to any user being able to call the record final price function.
 - In case there's a problem with the oracle, will need a manual option that can be set after a certain amount of time.
 - Will need to have a think about the price of the token in terms of charting and front end.
-
-For the meanwhile, the best option is to select official sources for price that have an api for prices with time range.
 
 ### Note about minting an NFT on registration
 
