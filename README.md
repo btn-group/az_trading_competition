@@ -35,10 +35,6 @@ To show a leaderboard:
 
 So that we don't have to start or modify a squid every time a tournament starts, it'd be best to have one contract instance that can control multiple tournaments.
 
-### Notes about adding and removing pools and admin functionality...
-
-With blockchain, you really want no admins and for it to be completely decentralised, and things should be built with that in mind where possible. At the same time, you want it to be some what flexible, allowing new tournaments to pick the pools that they want.
-
 ## Getting Started
 
 ### Prerequisites
