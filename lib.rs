@@ -43,23 +43,6 @@ mod az_trading_competition {
     const MINIMUM_DURATION: Timestamp = 3_600_000;
 
     // === STATICS ===
-    static ALLOWED_PAIR_TOKEN_COMBINATIONS: &[(&str, &str)] = &[
-        // WAZERO/USDC
-        (
-            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
-            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
-        ),
-        // WAZERO/ETH
-        (
-            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
-            "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
-        ),
-        // USDC/USDT
-        (
-            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
-            "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
-        ),
-    ];
     static TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS: &[(&str, &str)] = &[
         (
             "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
@@ -117,10 +100,15 @@ mod az_trading_competition {
         oracle: AccountId,
         dia_price_symbols: Mapping<AccountId, String>,
         allowed_pair_token_combinations: Mapping<AccountId, AccountId>,
+        allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
-        pub fn new(router: AccountId, oracle: AccountId) -> Self {
+        pub fn new(
+            router: AccountId,
+            oracle: AccountId,
+            allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
+        ) -> Self {
             let mut x = Self {
                 admin: Self::env().caller(),
                 router,
@@ -130,6 +118,7 @@ mod az_trading_competition {
                 oracle,
                 dia_price_symbols: Mapping::default(),
                 allowed_pair_token_combinations: Mapping::default(),
+                allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
             };
             for token_dia_price_symbol_combo in TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS.iter() {
                 x.dia_price_symbols.insert(
@@ -137,13 +126,15 @@ mod az_trading_competition {
                     &token_dia_price_symbol_combo.1.to_string(),
                 );
             }
-            for allowed_pair_token_combination in ALLOWED_PAIR_TOKEN_COMBINATIONS.iter() {
-                let token_0: AccountId =
-                    Self::convert_string_to_account_id(allowed_pair_token_combination.0);
-                let token_1: AccountId =
-                    Self::convert_string_to_account_id(allowed_pair_token_combination.1);
-                x.allowed_pair_token_combinations.insert(token_0, &token_1);
-                x.allowed_pair_token_combinations.insert(token_1, &token_0);
+            for allowed_pair_token_combination in allowed_pair_token_combinations_vec.iter() {
+                x.allowed_pair_token_combinations.insert(
+                    allowed_pair_token_combination.0,
+                    &allowed_pair_token_combination.1,
+                );
+                x.allowed_pair_token_combinations.insert(
+                    allowed_pair_token_combination.1,
+                    &allowed_pair_token_combination.0,
+                );
             }
             x
         }
@@ -165,15 +156,9 @@ mod az_trading_competition {
                         )
                     })
                     .collect(),
-                allowed_pair_token_combinations_vec: ALLOWED_PAIR_TOKEN_COMBINATIONS
-                    .iter()
-                    .map(|allowed_pair_token_combination| {
-                        (
-                            Self::convert_string_to_account_id(allowed_pair_token_combination.0),
-                            Self::convert_string_to_account_id(allowed_pair_token_combination.1),
-                        )
-                    })
-                    .collect(),
+                allowed_pair_token_combinations_vec: self
+                    .allowed_pair_token_combinations_vec
+                    .clone(),
             }
         }
 
@@ -335,9 +320,32 @@ mod az_trading_competition {
         fn init() -> (DefaultAccounts<DefaultEnvironment>, AzTradingCompetition) {
             let accounts = default_accounts();
             set_caller::<DefaultEnvironment>(accounts.bob);
-            let az_trading_competition =
-                AzTradingCompetition::new(mock_router_address(), mock_oracle_address());
+            let az_trading_competition = AzTradingCompetition::new(
+                mock_router_address(),
+                mock_oracle_address(),
+                mock_allowed_pair_token_combinations(),
+            );
             (accounts, az_trading_competition)
+        }
+
+        fn mock_allowed_pair_token_combinations() -> Vec<(AccountId, AccountId)> {
+            vec![
+                // WAZERO/USDC
+                (
+                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                ),
+                // WAZERO/ETH
+                (
+                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                    AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+                ),
+                // USDC/USDT
+                (
+                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                    AccountId::try_from(*b"tttttttttttttttttttttttttttttttt").unwrap(),
+                ),
+            ]
         }
 
         fn mock_entry_fee_token() -> AccountId {
@@ -379,17 +387,7 @@ mod az_trading_competition {
             );
             assert_eq!(
                 config.allowed_pair_token_combinations_vec,
-                ALLOWED_PAIR_TOKEN_COMBINATIONS
-                    .iter()
-                    .map(|allowed_pair_token_combination| (
-                        AzTradingCompetition::convert_string_to_account_id(
-                            allowed_pair_token_combination.0
-                        ),
-                        AzTradingCompetition::convert_string_to_account_id(
-                            allowed_pair_token_combination.1
-                        )
-                    ))
-                    .collect::<Vec<_>>()
+                mock_allowed_pair_token_combinations()
             );
         }
 

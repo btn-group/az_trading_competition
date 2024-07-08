@@ -3,6 +3,7 @@
 ### Notes about allowed pools and tokens
 
 - Only pools with large market caps will be allowed.
+- Common router only accepts token combinations, so that's how it will be stored in the contract.
 - Each token in pools must have a DIA price symbol associated with it.
 
 AZERO/USDC: 5C6s2qJAG5dCmPvR9WyKAVL6vJRDS9BjMwbrqwXGCsPiFViF
