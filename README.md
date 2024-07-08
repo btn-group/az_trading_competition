@@ -3,7 +3,45 @@
 ### Notes about allowed pools and tokens
 
 - Only pools with large market caps will be allowed.
+- Common router only accepts token combinations, so that's how it will be stored in the contract.
 - Each token in pools must have a DIA price symbol associated with it.
+
+static ALLOWED_PAIR_TOKEN_COMBINATIONS: &[(&str, &str)] = &[
+    // WAZERO/USDC
+    (
+        "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+        "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
+    ),
+    // WAZERO/ETH
+    (
+        "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+        "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
+    ),
+    // USDC/USDT
+    (
+        "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
+        "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
+    ),
+];
+
+static TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS: &[(&str, &str)] = &[
+    (
+        "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+        "AZERO/USD",
+    ),
+    (
+        "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
+        "ETH/USD",
+    ),
+    (
+        "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
+        "USDC/USD",
+    ),
+    (
+        "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
+        "USDT/USD",
+    ),
+];
 
 AZERO/USDC: 5C6s2qJAG5dCmPvR9WyKAVL6vJRDS9BjMwbrqwXGCsPiFViF
 USDC/USDT: 5CiP96MhEGHnLFGS64uVznrwbuVdFj6kewrEZoLRzxUEqxws

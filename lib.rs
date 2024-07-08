@@ -5,7 +5,6 @@ mod errors;
 #[ink::contract]
 mod az_trading_competition {
     use crate::errors::AzTradingCompetitionError;
-    use bs58;
     use ink::{
         codegen::EmitEvent,
         env::CallFlags,
@@ -41,43 +40,7 @@ mod az_trading_competition {
     // === CONSTANTS ===
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
-
-    // === STATICS ===
-    static ALLOWED_PAIR_TOKEN_COMBINATIONS: &[(&str, &str)] = &[
-        // WAZERO/USDC
-        (
-            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
-            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
-        ),
-        // WAZERO/ETH
-        (
-            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
-            "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
-        ),
-        // USDC/USDT
-        (
-            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
-            "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
-        ),
-    ];
-    static TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS: &[(&str, &str)] = &[
-        (
-            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
-            "AZERO/USD",
-        ),
-        (
-            "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
-            "ETH/USD",
-        ),
-        (
-            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
-            "USDC/USD",
-        ),
-        (
-            "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
-            "USDT/USD",
-        ),
-    ];
+    const VALID_DIA_PRICE_SYMBOLS: &[&str] = &["AZERO/USD", "ETH/USD", "USDC/USD", "USDT/USD"];
 
     // === STRUCTS ===
     #[derive(Debug, Clone, scale::Encode, scale::Decode)]
@@ -116,11 +79,18 @@ mod az_trading_competition {
         competitions: Mapping<u64, Competition>,
         oracle: AccountId,
         dia_price_symbols: Mapping<AccountId, String>,
+        dia_price_symbols_vec: Vec<(AccountId, String)>,
         allowed_pair_token_combinations: Mapping<AccountId, AccountId>,
+        allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
-        pub fn new(router: AccountId, oracle: AccountId) -> Self {
+        pub fn new(
+            router: AccountId,
+            oracle: AccountId,
+            dia_price_symbols_vec: Vec<(AccountId, String)>,
+            allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
+        ) -> Result<Self> {
             let mut x = Self {
                 admin: Self::env().caller(),
                 router,
@@ -129,23 +99,45 @@ mod az_trading_competition {
                 competitions: Mapping::default(),
                 oracle,
                 dia_price_symbols: Mapping::default(),
+                dia_price_symbols_vec: dia_price_symbols_vec.clone(),
                 allowed_pair_token_combinations: Mapping::default(),
+                allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
             };
-            for token_dia_price_symbol_combo in TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS.iter() {
-                x.dia_price_symbols.insert(
-                    Self::convert_string_to_account_id(token_dia_price_symbol_combo.0),
-                    &token_dia_price_symbol_combo.1.to_string(),
-                );
+            for token_dia_price_symbol_combo in dia_price_symbols_vec.iter() {
+                if VALID_DIA_PRICE_SYMBOLS.contains(&&token_dia_price_symbol_combo.1[..]) {
+                    x.dia_price_symbols.insert(
+                        token_dia_price_symbol_combo.0,
+                        &token_dia_price_symbol_combo.1,
+                    );
+                } else {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Invalid DIA price symbol.".to_string(),
+                    ));
+                }
             }
-            for allowed_pair_token_combination in ALLOWED_PAIR_TOKEN_COMBINATIONS.iter() {
-                let token_0: AccountId =
-                    Self::convert_string_to_account_id(allowed_pair_token_combination.0);
-                let token_1: AccountId =
-                    Self::convert_string_to_account_id(allowed_pair_token_combination.1);
-                x.allowed_pair_token_combinations.insert(token_0, &token_1);
-                x.allowed_pair_token_combinations.insert(token_1, &token_0);
+            for allowed_pair_token_combination in allowed_pair_token_combinations_vec.iter() {
+                if x.dia_price_symbols
+                    .get(allowed_pair_token_combination.0)
+                    .is_none()
+                    || x.dia_price_symbols
+                        .get(allowed_pair_token_combination.1)
+                        .is_none()
+                {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Invalid pair token combinations.".to_string(),
+                    ));
+                } else {
+                    x.allowed_pair_token_combinations.insert(
+                        allowed_pair_token_combination.0,
+                        &allowed_pair_token_combination.1,
+                    );
+                    x.allowed_pair_token_combinations.insert(
+                        allowed_pair_token_combination.1,
+                        &allowed_pair_token_combination.0,
+                    );
+                }
             }
-            x
+            Ok(x)
         }
 
         // === QUERIES ===
@@ -156,24 +148,10 @@ mod az_trading_competition {
                 router: self.router,
                 competitions_count: self.competitions_count,
                 oracle: self.oracle,
-                dia_price_symbols_vec: TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS
-                    .iter()
-                    .map(|token_dia_price_symbol_combo| {
-                        (
-                            Self::convert_string_to_account_id(token_dia_price_symbol_combo.0),
-                            token_dia_price_symbol_combo.1.to_string(),
-                        )
-                    })
-                    .collect(),
-                allowed_pair_token_combinations_vec: ALLOWED_PAIR_TOKEN_COMBINATIONS
-                    .iter()
-                    .map(|allowed_pair_token_combination| {
-                        (
-                            Self::convert_string_to_account_id(allowed_pair_token_combination.0),
-                            Self::convert_string_to_account_id(allowed_pair_token_combination.1),
-                        )
-                    })
-                    .collect(),
+                dia_price_symbols_vec: self.dia_price_symbols_vec.clone(),
+                allowed_pair_token_combinations_vec: self
+                    .allowed_pair_token_combinations_vec
+                    .clone(),
             }
         }
 
@@ -302,17 +280,6 @@ mod az_trading_competition {
             Ok(())
         }
 
-        fn convert_string_to_account_id(account_str: &str) -> AccountId {
-            let mut output = vec![0xFF; 35];
-            bs58::decode(account_str).onto(&mut output).unwrap();
-            let cut_address_vec: Vec<_> = output.drain(1..33).collect();
-            let mut array = [0; 32];
-            let bytes = &cut_address_vec[..array.len()];
-            array.copy_from_slice(bytes);
-            let account_id: AccountId = array.into();
-            account_id
-        }
-
         fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
             emitter.emit_event(event);
         }
@@ -335,15 +302,58 @@ mod az_trading_competition {
         fn init() -> (DefaultAccounts<DefaultEnvironment>, AzTradingCompetition) {
             let accounts = default_accounts();
             set_caller::<DefaultEnvironment>(accounts.bob);
-            let az_trading_competition =
-                AzTradingCompetition::new(mock_router_address(), mock_oracle_address());
-            (accounts, az_trading_competition)
+            let az_trading_competition = AzTradingCompetition::new(
+                mock_router_address(),
+                mock_oracle_address(),
+                mock_token_to_dia_price_symbol_combos(),
+                mock_allowed_pair_token_combinations(),
+            );
+            (accounts, az_trading_competition.expect("REASON"))
+        }
+
+        fn mock_token_to_dia_price_symbol_combos() -> Vec<(AccountId, String)> {
+            vec![
+                (
+                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                    "AZERO/USD".to_string(),
+                ),
+                (
+                    AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+                    "ETH/USD".to_string(),
+                ),
+                (
+                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                    "USDC/USD".to_string(),
+                ),
+                (
+                    AccountId::try_from(*b"tttttttttttttttttttttttttttttttt").unwrap(),
+                    "USDT/USD".to_string(),
+                ),
+            ]
+        }
+
+        fn mock_allowed_pair_token_combinations() -> Vec<(AccountId, AccountId)> {
+            vec![
+                // WAZERO/USDC
+                (
+                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                ),
+                // WAZERO/ETH
+                (
+                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                    AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+                ),
+                // USDC/USDT
+                (
+                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                    AccountId::try_from(*b"tttttttttttttttttttttttttttttttt").unwrap(),
+                ),
+            ]
         }
 
         fn mock_entry_fee_token() -> AccountId {
-            AzTradingCompetition::convert_string_to_account_id(
-                "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
-            )
+            AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap()
         }
 
         fn mock_router_address() -> AccountId {
@@ -367,29 +377,11 @@ mod az_trading_competition {
             assert_eq!(config.oracle, mock_oracle_address());
             assert_eq!(
                 config.dia_price_symbols_vec,
-                TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS
-                    .iter()
-                    .map(|token_dia_price_symbol_combo| (
-                        AzTradingCompetition::convert_string_to_account_id(
-                            token_dia_price_symbol_combo.0
-                        ),
-                        token_dia_price_symbol_combo.1.to_string()
-                    ))
-                    .collect::<Vec<_>>()
+                mock_token_to_dia_price_symbol_combos()
             );
             assert_eq!(
                 config.allowed_pair_token_combinations_vec,
-                ALLOWED_PAIR_TOKEN_COMBINATIONS
-                    .iter()
-                    .map(|allowed_pair_token_combination| (
-                        AzTradingCompetition::convert_string_to_account_id(
-                            allowed_pair_token_combination.0
-                        ),
-                        AzTradingCompetition::convert_string_to_account_id(
-                            allowed_pair_token_combination.1
-                        )
-                    ))
-                    .collect::<Vec<_>>()
+                mock_allowed_pair_token_combinations()
             );
         }
 
