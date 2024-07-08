@@ -39,15 +39,27 @@ mod az_trading_competition {
     }
 
     // === CONSTANTS ===
-    const ALLOWED_POOLS: &[&str] = &[
-        "5C6s2qJAG5dCmPvR9WyKAVL6vJRDS9BjMwbrqwXGCsPiFViF",
-        "5CiP96MhEGHnLFGS64uVznrwbuVdFj6kewrEZoLRzxUEqxws",
-        "5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE",
-    ];
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
 
     // === STATICS ===
+    static ALLOWED_PAIR_TOKEN_COMBINATIONS: &[(&str, &str)] = &[
+        // WAZERO/USDC
+        (
+            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
+        ),
+        // WAZERO/ETH
+        (
+            "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
+            "5EoFQd36196Duo6fPTz2MWHXRzwTJcyETHyCyaB3rb61Xo2u",
+        ),
+        // USDC/USDT
+        (
+            "5FYFojNCJVFR2bBNKfAePZCa72ZcVX5yeTv8K9bzeUo8D83Z",
+            "5Et3dDcXUiThrBCot7g65k3oDSicGy4qC82cq9f911izKNtE",
+        ),
+    ];
     static TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS: &[(&str, &str)] = &[
         (
             "5CtuFVgEUz13SFPVY6s2cZrnLDEkxQXc19aXrNARwEBeCXgg",
@@ -76,7 +88,7 @@ mod az_trading_competition {
         pub oracle: AccountId,
         pub competitions_count: u64,
         pub dia_price_symbols_vec: Vec<(AccountId, String)>,
-        pub allowed_pools_vec: Vec<AccountId>,
+        pub allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -104,7 +116,7 @@ mod az_trading_competition {
         competitions: Mapping<u64, Competition>,
         oracle: AccountId,
         dia_price_symbols: Mapping<AccountId, String>,
-        allowed_pools: Mapping<AccountId, bool>,
+        allowed_pair_token_combinations: Mapping<AccountId, AccountId>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
@@ -117,7 +129,7 @@ mod az_trading_competition {
                 competitions: Mapping::default(),
                 oracle,
                 dia_price_symbols: Mapping::default(),
-                allowed_pools: Mapping::default(),
+                allowed_pair_token_combinations: Mapping::default(),
             };
             for token_dia_price_symbol_combo in TOKEN_TO_DIA_PRICE_SYMBOL_COMBOS.iter() {
                 x.dia_price_symbols.insert(
@@ -125,9 +137,13 @@ mod az_trading_competition {
                     &token_dia_price_symbol_combo.1.to_string(),
                 );
             }
-            for pool in ALLOWED_POOLS.iter() {
-                x.allowed_pools
-                    .insert(Self::convert_string_to_account_id(pool), &true);
+            for allowed_pair_token_combination in ALLOWED_PAIR_TOKEN_COMBINATIONS.iter() {
+                let token_0: AccountId =
+                    Self::convert_string_to_account_id(allowed_pair_token_combination.0);
+                let token_1: AccountId =
+                    Self::convert_string_to_account_id(allowed_pair_token_combination.1);
+                x.allowed_pair_token_combinations.insert(token_0, &token_1);
+                x.allowed_pair_token_combinations.insert(token_1, &token_0);
             }
             x
         }
@@ -149,9 +165,14 @@ mod az_trading_competition {
                         )
                     })
                     .collect(),
-                allowed_pools_vec: ALLOWED_POOLS
+                allowed_pair_token_combinations_vec: ALLOWED_PAIR_TOKEN_COMBINATIONS
                     .iter()
-                    .map(|pool| Self::convert_string_to_account_id(pool))
+                    .map(|allowed_pair_token_combination| {
+                        (
+                            Self::convert_string_to_account_id(allowed_pair_token_combination.0),
+                            Self::convert_string_to_account_id(allowed_pair_token_combination.1),
+                        )
+                    })
                     .collect(),
             }
         }
@@ -357,10 +378,17 @@ mod az_trading_competition {
                     .collect::<Vec<_>>()
             );
             assert_eq!(
-                config.allowed_pools_vec,
-                ALLOWED_POOLS
+                config.allowed_pair_token_combinations_vec,
+                ALLOWED_PAIR_TOKEN_COMBINATIONS
                     .iter()
-                    .map(|pool| AzTradingCompetition::convert_string_to_account_id(pool))
+                    .map(|allowed_pair_token_combination| (
+                        AzTradingCompetition::convert_string_to_account_id(
+                            allowed_pair_token_combination.0
+                        ),
+                        AzTradingCompetition::convert_string_to_account_id(
+                            allowed_pair_token_combination.1
+                        )
+                    ))
                     .collect::<Vec<_>>()
             );
         }
