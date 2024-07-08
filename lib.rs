@@ -80,7 +80,7 @@ mod az_trading_competition {
         oracle: AccountId,
         dia_price_symbols: Mapping<AccountId, String>,
         dia_price_symbols_vec: Vec<(AccountId, String)>,
-        allowed_pair_token_combinations: Mapping<AccountId, AccountId>,
+        allowed_pair_token_combinations: Mapping<AccountId, Vec<AccountId>>,
         allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
     }
     impl AzTradingCompetition {
@@ -127,14 +127,32 @@ mod az_trading_competition {
                         "Invalid pair token combinations.".to_string(),
                     ));
                 } else {
-                    x.allowed_pair_token_combinations.insert(
-                        allowed_pair_token_combination.0,
-                        &allowed_pair_token_combination.1,
-                    );
-                    x.allowed_pair_token_combinations.insert(
-                        allowed_pair_token_combination.1,
-                        &allowed_pair_token_combination.0,
-                    );
+                    if let Some(mut allowed_to_tokens) = x
+                        .allowed_pair_token_combinations
+                        .get(allowed_pair_token_combination.0)
+                    {
+                        allowed_to_tokens.push(allowed_pair_token_combination.1);
+                        x.allowed_pair_token_combinations
+                            .insert(allowed_pair_token_combination.0, &allowed_to_tokens);
+                    } else {
+                        x.allowed_pair_token_combinations.insert(
+                            allowed_pair_token_combination.0,
+                            &vec![allowed_pair_token_combination.1],
+                        );
+                    }
+                    if let Some(mut allowed_to_tokens) = x
+                        .allowed_pair_token_combinations
+                        .get(allowed_pair_token_combination.1)
+                    {
+                        allowed_to_tokens.push(allowed_pair_token_combination.0);
+                        x.allowed_pair_token_combinations
+                            .insert(allowed_pair_token_combination.1, &allowed_to_tokens);
+                    } else {
+                        x.allowed_pair_token_combinations.insert(
+                            allowed_pair_token_combination.1,
+                            &vec![allowed_pair_token_combination.0],
+                        );
+                    }
                 }
             }
             Ok(x)
@@ -239,9 +257,9 @@ mod az_trading_competition {
         #[ink(message)]
         pub fn register(&mut self, id: u64) -> Result<()> {
             let mut competition: Competition = self.competitions_show(id)?;
-            // 1. Check that time is before start
+            // 1. Validate that time is before start
             self.competition_has_not_started(competition.start)?;
-            // 2. Check that user hasn't registered already
+            // 2. Validate that user hasn't registered already
             let caller: AccountId = Self::env().caller();
             if self
                 .competition_token_users
@@ -274,6 +292,72 @@ mod az_trading_competition {
             Ok(())
         }
 
+        #[ink(message)]
+        pub fn swap_exact_tokens_for_tokens(
+            &mut self,
+            id: u64,
+            _amount_in: u128,
+            _amount_out_min: u128,
+            path: Vec<AccountId>,
+            _deadline: u64,
+        ) -> Result<()> {
+            let competition: Competition = self.competitions_show(id)?;
+            // 1. Validate that competition is in progress
+            self.competition_is_in_progress(competition.clone())?;
+            // 2. Validate that user is part of the competition
+            let caller: AccountId = Self::env().caller();
+            if self
+                .competition_token_users
+                .get((id, competition.entry_fee_token, caller))
+                .is_none()
+            {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "You are not registered for this competition.".to_string(),
+                ));
+            }
+            // 3. Validate that path is valid
+            let mut previous_token: Option<AccountId> = None;
+            for token in path.iter() {
+                if previous_token.is_some() {
+                    let mut valid = false;
+                    if let Some(to_tokens) = self
+                        .allowed_pair_token_combinations
+                        .get(previous_token.unwrap())
+                    {
+                        if to_tokens.iter().any(|&i| i == *token) {
+                            valid = true
+                        }
+                    }
+                    if !valid {
+                        return Err(AzTradingCompetitionError::UnprocessableEntity(
+                            "Path is invalid.".to_string(),
+                        ));
+                    }
+                }
+                previous_token = Some(*token)
+            }
+
+            // // 3. Acquire token from caller
+            // self.acquire_psp22(
+            //     competition.entry_fee_token,
+            //     caller,
+            //     competition.entry_fee_amount,
+            // )?;
+            // // 4. Set balance of token users
+            // self.competition_token_users.insert(
+            //     (id, competition.entry_fee_token, caller),
+            //     &competition.entry_fee_amount,
+            // );
+            // // 5. Increase competition.user_count
+            // competition.user_count += 1;
+            // self.competitions.insert(competition.id, &competition);
+
+            // // emit event
+            // Self::emit_event(self.env(), Event::Register(Register { id, user: caller }));
+
+            Ok(())
+        }
+
         // === PRIVATE ===
         fn acquire_psp22(&self, token: AccountId, from: AccountId, amount: Balance) -> Result<()> {
             PSP22Ref::transfer_from_builder(&token, from, self.env().account_id(), amount, vec![])
@@ -287,6 +371,18 @@ mod az_trading_competition {
             if Self::env().block_timestamp() >= start {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Competition has started".to_string(),
+                ));
+            }
+
+            Ok(())
+        }
+
+        fn competition_is_in_progress(&self, competition: Competition) -> Result<()> {
+            if Self::env().block_timestamp() < competition.start
+                || Self::env().block_timestamp() > competition.end
+            {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition isn't in progress.".to_string(),
                 ));
             }
 
@@ -537,6 +633,115 @@ mod az_trading_competition {
                 ))
             );
             // == the rest needs to be done in integration tests
+        }
+
+        #[ink::test]
+        fn test_swap_exact_tokens_for_tokens() {
+            let (accounts, mut az_trading_competition) = init();
+            let id: u64 = 0;
+            let amount_in: u128 = 555;
+            let amount_out_min: u128 = 555;
+            let path: Vec<AccountId> = vec![];
+            let deadline: u64 = MOCK_START + MINIMUM_DURATION;
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path.clone(),
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                )
+                .unwrap();
+            // = when competition hasn't started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
+            // = * it raises an error
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path.clone(),
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition isn't in progress.".to_string(),
+                ))
+            );
+            // = when competition has ended
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                MOCK_START + MINIMUM_DURATION + 1,
+            );
+            // = * it raises an error
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path.clone(),
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition isn't in progress.".to_string(),
+                ))
+            );
+            // = when competition is in progress
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                MOCK_START + MINIMUM_DURATION,
+            );
+            // == when user is not registered
+            // == * it raises an error
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path,
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "You are not registered for this competition.".to_string(),
+                ))
+            );
+            // == when user is registered
+            az_trading_competition
+                .competition_token_users
+                .insert((0, mock_entry_fee_token(), accounts.bob), &0);
+            // === when any of the tokens in path are invalid
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                vec![
+                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                    AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+                ],
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Path is invalid.".to_string(),
+                ))
+            );
         }
     }
 }
