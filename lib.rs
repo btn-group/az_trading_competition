@@ -299,7 +299,7 @@ mod az_trading_competition {
             amount_in: u128,
             _amount_out_min: u128,
             path: Vec<AccountId>,
-            _deadline: u64,
+            deadline: u64,
         ) -> Result<()> {
             let competition: Competition = self.competitions_show(id)?;
             // 1. Validate that competition is in progress
@@ -345,6 +345,12 @@ mod az_trading_competition {
             {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Insufficient balance.".to_string(),
+                ));
+            }
+            // 5. Check that deadline is less than or equal to end
+            if deadline > competition.end {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Deadline is after competition end.".to_string(),
                 ));
             }
 
@@ -765,7 +771,7 @@ mod az_trading_competition {
                 id,
                 amount_in,
                 amount_out_min,
-                path,
+                path.clone(),
                 deadline,
             );
             assert_eq!(
@@ -774,6 +780,28 @@ mod az_trading_competition {
                     "Insufficient balance.".to_string(),
                 ))
             );
+            // ==== when amount_in is available to user
+            amount_in = az_trading_competition
+                .competition_token_users
+                .get((id, path[0], accounts.bob))
+                .unwrap_or(0);
+            // ===== when deadline is greater than competition end
+            // ===== * it raises an error
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path,
+                deadline + 1,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Deadline is after competition end.".to_string(),
+                ))
+            );
+            // ===== when deadline is <= competition.end
+            // ===== THE REST NEEDS TO HAPPEN IN INTEGRATION TESTS
         }
     }
 }
