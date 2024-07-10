@@ -296,7 +296,7 @@ mod az_trading_competition {
         pub fn swap_exact_tokens_for_tokens(
             &mut self,
             id: u64,
-            _amount_in: u128,
+            amount_in: u128,
             _amount_out_min: u128,
             path: Vec<AccountId>,
             _deadline: u64,
@@ -336,13 +336,18 @@ mod az_trading_competition {
                 }
                 previous_token = Some(*token)
             }
+            // 4. Check that user has enough to cover amount_in
+            if amount_in
+                > self
+                    .competition_token_users
+                    .get((id, path[0], caller))
+                    .unwrap_or(0)
+            {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Insufficient balance.".to_string(),
+                ));
+            }
 
-            // // 3. Acquire token from caller
-            // self.acquire_psp22(
-            //     competition.entry_fee_token,
-            //     caller,
-            //     competition.entry_fee_amount,
-            // )?;
             // // 4. Set balance of token users
             // self.competition_token_users.insert(
             //     (id, competition.entry_fee_token, caller),
@@ -639,9 +644,9 @@ mod az_trading_competition {
         fn test_swap_exact_tokens_for_tokens() {
             let (accounts, mut az_trading_competition) = init();
             let id: u64 = 0;
-            let amount_in: u128 = 555;
+            let mut amount_in: u128 = 555;
             let amount_out_min: u128 = 555;
-            let path: Vec<AccountId> = vec![];
+            let mut path: Vec<AccountId> = vec![];
             let deadline: u64 = MOCK_START + MINIMUM_DURATION;
             // when competition does not exist
             // * it raises an error
@@ -725,21 +730,48 @@ mod az_trading_competition {
                 .competition_token_users
                 .insert((0, mock_entry_fee_token(), accounts.bob), &0);
             // === when any of the tokens in path are invalid
+            path = vec![
+                AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
+            ];
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
                 amount_in,
                 amount_out_min,
-                vec![
-                    AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
-                    AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
-                    AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
-                ],
+                path,
                 deadline,
             );
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Path is invalid.".to_string(),
+                ))
+            );
+            // === when path is valid
+            path = vec![
+                AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
+                AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
+                AccountId::try_from(*b"tttttttttttttttttttttttttttttttt").unwrap(),
+            ];
+            // ==== when amount_in is greater than what is available to user
+            amount_in = az_trading_competition
+                .competition_token_users
+                .get((id, path[0], accounts.bob))
+                .unwrap_or(0)
+                + 1;
+            // ==== * it raises an error
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path,
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Insufficient balance.".to_string(),
                 ))
             );
         }
