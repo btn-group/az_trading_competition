@@ -224,6 +224,19 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn increase_allowance_for_router(
+            &mut self,
+            token: AccountId,
+            amount: Balance,
+        ) -> Result<()> {
+            PSP22Ref::increase_allowance_builder(&token, self.router, amount)
+                .call_flags(CallFlags::default())
+                .invoke()?;
+
+            Ok(())
+        }
+
+        #[ink(message)]
         pub fn register(&mut self, id: u64) -> Result<()> {
             let mut competition: Competition = self.competitions_show(id)?;
             // 1. Check that time is before start
