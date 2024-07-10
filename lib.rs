@@ -4,9 +4,10 @@ mod errors;
 
 #[ink::contract]
 mod az_trading_competition {
-    use crate::errors::AzTradingCompetitionError;
+    use crate::errors::{AzTradingCompetitionError, RouterError};
     use ink::{
         codegen::EmitEvent,
+        env::call::{build_call, ExecutionInput, Selector},
         env::CallFlags,
         prelude::{string::ToString, vec, vec::Vec},
         reflect::ContractEventBase,
@@ -35,6 +36,16 @@ mod az_trading_competition {
         #[ink(topic)]
         id: u64,
         user: AccountId,
+    }
+
+    #[ink(event)]
+    pub struct Swap {
+        id: u64,
+        user: AccountId,
+        in_token: AccountId,
+        in_amount: Balance,
+        out_token: AccountId,
+        out_amount: Balance,
     }
 
     // === CONSTANTS ===
@@ -297,11 +308,13 @@ mod az_trading_competition {
             &mut self,
             id: u64,
             amount_in: u128,
-            _amount_out_min: u128,
+            amount_out_min: u128,
             path: Vec<AccountId>,
             deadline: u64,
         ) -> Result<()> {
             let competition: Competition = self.competitions_show(id)?;
+            let in_token = path[0];
+            let out_token = path[path.len() - 1];
             // 1. Validate that competition is in progress
             self.competition_is_in_progress(competition.clone())?;
             // 2. Validate that user is part of the competition
@@ -340,7 +353,7 @@ mod az_trading_competition {
             if amount_in
                 > self
                     .competition_token_users
-                    .get((id, path[0], caller))
+                    .get((id, in_token, caller))
                     .unwrap_or(0)
             {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -354,17 +367,54 @@ mod az_trading_competition {
                 ));
             }
 
-            // // 4. Set balance of token users
-            // self.competition_token_users.insert(
-            //     (id, competition.entry_fee_token, caller),
-            //     &competition.entry_fee_amount,
-            // );
-            // // 5. Increase competition.user_count
-            // competition.user_count += 1;
-            // self.competitions.insert(competition.id, &competition);
+            // 6. Call router
+            const SWAP_EXACT_TOKENS_FOR_TOKENS_SELECTOR: [u8; 4] =
+                ink::selector_bytes!("swap_exact_tokens_for_tokens");
+            let result_of_swaps: Vec<u128> = build_call::<Environment>()
+                .call(self.router)
+                .exec_input(
+                    ExecutionInput::new(Selector::new(SWAP_EXACT_TOKENS_FOR_TOKENS_SELECTOR))
+                        .push_arg(amount_in)
+                        .push_arg(amount_out_min)
+                        .push_arg(path.clone())
+                        .push_arg(self.env().account_id())
+                        .push_arg(deadline),
+                )
+                .returns::<core::result::Result<Vec<u128>, RouterError>>()
+                .invoke()?;
+            let out_amount: u128 = result_of_swaps[result_of_swaps.len() - 1];
+            // 7. Adjust user balances
+            // Decrease amount_in for competition token user
+            let in_competition_token_user_balance: Balance = self
+                .competition_token_users
+                .get((id, in_token, caller))
+                .unwrap_or(0);
+            self.competition_token_users.insert(
+                (id, in_token, caller),
+                &(in_competition_token_user_balance - amount_in),
+            );
+            // Increase received amount for competition token user
+            let out_competition_token_user_balance: Balance = self
+                .competition_token_users
+                .get((id, out_token, caller))
+                .unwrap_or(0);
+            self.competition_token_users.insert(
+                (id, out_token, caller),
+                &(out_competition_token_user_balance + out_amount),
+            );
 
-            // // emit event
-            // Self::emit_event(self.env(), Event::Register(Register { id, user: caller }));
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::Swap(Swap {
+                    id,
+                    user: caller,
+                    in_token,
+                    in_amount: amount_in,
+                    out_token,
+                    out_amount,
+                }),
+            );
 
             Ok(())
         }
