@@ -32,6 +32,13 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct PayoutStructureUpdate {
+        #[ink(topic)]
+        id: u64,
+        payout_structure_numerators: Vec<(u16, u16)>,
+    }
+
+    #[ink(event)]
     pub struct Register {
         #[ink(topic)]
         id: u64,
@@ -51,6 +58,7 @@ mod az_trading_competition {
     // === CONSTANTS ===
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
+    const PAYOUT_STRUCTURE_DENOMINATOR: u16 = 10_000;
     const VALID_DIA_PRICE_SYMBOLS: &[&str] = &["AZERO/USD", "ETH/USD", "USDC/USD", "USDT/USD"];
 
     // === STRUCTS ===
@@ -77,7 +85,9 @@ mod az_trading_competition {
         pub entry_fee_token: AccountId,
         pub entry_fee_amount: Balance,
         pub creator: AccountId,
-        pub user_count: u64,
+        pub payout_places: u16,
+        pub payout_structure_numerator_sum: u16,
+        pub user_count: u32,
     }
 
     // === CONTRACT ===
@@ -85,6 +95,7 @@ mod az_trading_competition {
     pub struct AzTradingCompetition {
         admin: AccountId,
         router: AccountId,
+        competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
         competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
         competitions_count: u64,
         competitions: Mapping<u64, Competition>,
@@ -105,6 +116,7 @@ mod az_trading_competition {
             let mut x = Self {
                 admin: Self::env().caller(),
                 router,
+                competition_payout_structure_numerators: Mapping::default(),
                 competition_token_users: Mapping::default(),
                 competitions_count: 0,
                 competitions: Mapping::default(),
@@ -229,6 +241,8 @@ mod az_trading_competition {
                 end,
                 entry_fee_token,
                 entry_fee_amount,
+                payout_places: 0,
+                payout_structure_numerator_sum: 0,
                 creator: Self::env().caller(),
                 user_count: 0,
             };
@@ -250,6 +264,92 @@ mod az_trading_competition {
             );
 
             Ok(competition)
+        }
+
+        #[ink(message)]
+        pub fn competition_payout_structure_numerators_update(
+            &mut self,
+            id: u64,
+            payout_structure_numerators: Vec<(u16, u16)>,
+        ) -> Result<u16> {
+            let caller: AccountId = Self::env().caller();
+            let mut competition: Competition = self.competitions_show(id)?;
+            Self::authorise(competition.creator, caller)?;
+            self.competition_has_not_started(competition.start)?;
+            if competition.user_count > 0 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Unable to change when registrants present.".to_string(),
+                ));
+            }
+
+            // Do the validations first as the inserts sustain in tests
+            // even if there is an error
+            let mut positions: Vec<u16> = vec![];
+            for payout_structure_numerator in payout_structure_numerators.iter() {
+                let position: u16 = payout_structure_numerator.0;
+                positions.push(position);
+                let numerator: u16 = payout_structure_numerator.1;
+                let previous_numerator: u16 = self
+                    .competition_payout_structure_numerators
+                    .get((id, position))
+                    .unwrap_or(0);
+
+                // 1. Check that the position before is present
+                if position > 0
+                    && self
+                        .competition_payout_structure_numerators
+                        .get((id, position - 1))
+                        .is_none()
+                    && !positions.contains(&(position - 1))
+                {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Position must come after a present position.".to_string(),
+                    ));
+                }
+                // 2. Check that numerator is positive
+                if numerator == 0 {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Numerator must be positive.".to_string(),
+                    ));
+                }
+
+                // 3. Update payout_places if possible
+                if position >= competition.payout_places {
+                    competition.payout_places = position + 1
+                }
+                // 4. Add to numerator sum
+                competition.payout_structure_numerator_sum += numerator;
+                // 5. Subtract previous numerator if present
+                competition.payout_structure_numerator_sum -= previous_numerator;
+            }
+            // 6. Check that numerator sum is less than or equal to denominator
+            if competition.payout_structure_numerator_sum > PAYOUT_STRUCTURE_DENOMINATOR {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Numerator is greater than denominator.".to_string(),
+                ));
+            }
+
+            // 7. Save
+            for payout_structure_numerator in payout_structure_numerators.iter() {
+                let position: u16 = payout_structure_numerator.0;
+                let numerator: u16 = payout_structure_numerator.1;
+                self.competition_payout_structure_numerators
+                    .insert((id, position), &numerator);
+            }
+
+            // 8. Save competition
+            self.competitions.insert(id, &competition);
+
+            // Emit event
+            Self::emit_event(
+                self.env(),
+                Event::PayoutStructureUpdate(PayoutStructureUpdate {
+                    id,
+                    payout_structure_numerators,
+                }),
+            );
+
+            Ok(competition.payout_structure_numerator_sum)
         }
 
         #[ink(message)]
@@ -313,7 +413,7 @@ mod az_trading_competition {
             deadline: u64,
         ) -> Result<()> {
             let competition: Competition = self.competitions_show(id)?;
-            if path.len() == 0 {
+            if path.is_empty() {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Path is empty.".to_string(),
                 ));
@@ -430,6 +530,14 @@ mod az_trading_competition {
             PSP22Ref::transfer_from_builder(&token, from, self.env().account_id(), amount, vec![])
                 .call_flags(CallFlags::default())
                 .invoke()?;
+
+            Ok(())
+        }
+
+        fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
+            if allowed != received {
+                return Err(AzTradingCompetitionError::Unauthorised);
+            }
 
             Ok(())
         }
@@ -650,6 +758,176 @@ mod az_trading_competition {
                 az_trading_competition.competitions_count,
                 competitions_count + 1
             );
+        }
+
+        #[ink::test]
+        fn test_competition_payout_structure_numerators_update() {
+            let (accounts, mut az_trading_competition) = init();
+            let mut payout_structure_numerators: Vec<(u16, u16)> = vec![(0, 1)];
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.competition_payout_structure_numerators_update(
+                0,
+                payout_structure_numerators.clone(),
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                )
+                .unwrap();
+            // = when called by non-creator
+            set_caller::<DefaultEnvironment>(accounts.charlie);
+            // = * it raises an error
+            let result = az_trading_competition.competition_payout_structure_numerators_update(
+                0,
+                payout_structure_numerators.clone(),
+            );
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+            // = when called by creator
+            set_caller::<DefaultEnvironment>(accounts.bob);
+            // == when competition has started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
+            let result = az_trading_competition.competition_payout_structure_numerators_update(
+                0,
+                payout_structure_numerators.clone(),
+            );
+            // == * it raises an error
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition has started".to_string(),
+                ))
+            );
+            // == when competition has not started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
+            // === when competition has registrants
+            let mut competition: Competition = az_trading_competition.competitions.get(0).unwrap();
+            competition.user_count = 1;
+            az_trading_competition.competitions.insert(0, &competition);
+            let result = az_trading_competition.competition_payout_structure_numerators_update(
+                0,
+                payout_structure_numerators.clone(),
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Unable to change when registrants present.".to_string(),
+                ))
+            );
+            // === when competition does not have registrants
+            competition.user_count = 0;
+            az_trading_competition.competitions.insert(0, &competition);
+            // ==== when a payout_structure_numerator is greater than zero and the position before does not have a numerator set
+            // ==== * it raises an error
+            payout_structure_numerators = vec![(0, 1), (2, 1)];
+            let result = az_trading_competition
+                .competition_payout_structure_numerators_update(0, payout_structure_numerators);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Position must come after a present position.".to_string(),
+                ))
+            );
+            // ==== when all payout_structure_numerators have a zero position or have a position before with a numerator set
+            payout_structure_numerators =
+                vec![(0, 1), (1, 2), (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1)];
+            // ===== when a numerator is zero
+            payout_structure_numerators = vec![
+                (0, 1),
+                (1, 2),
+                (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1),
+                (3, 0),
+            ];
+            // ===== * it raises an error
+            let result = az_trading_competition.competition_payout_structure_numerators_update(
+                0,
+                payout_structure_numerators.clone(),
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Numerator must be positive.".to_string(),
+                ))
+            );
+            // ====== when all numerators are positive
+            // ======= when new numerators causes the sum of numerators to be larger than denominator
+            payout_structure_numerators = vec![
+                (0, 1),
+                (1, 2),
+                (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1),
+                (3, 1),
+            ];
+            // // ======= * it raises an error
+            let result = az_trading_competition.competition_payout_structure_numerators_update(
+                0,
+                payout_structure_numerators.clone(),
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Numerator is greater than denominator.".to_string(),
+                ))
+            );
+            // // ======= when new numerators causes the sum of numerators to be less than or equal to denominator
+            payout_structure_numerators =
+                vec![(0, 1), (1, 2), (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1)];
+            // ======== when competition.payout_places is less than or equal to the highest position in payout_structure_numerators
+            // ======== * it updates the payout_places to the highest position + 1
+            az_trading_competition
+                .competition_payout_structure_numerators_update(
+                    0,
+                    payout_structure_numerators.clone(),
+                )
+                .unwrap();
+            competition = az_trading_competition.competitions.get(0).unwrap();
+            assert_eq!(competition.payout_places, 3);
+            // ======== * it saves the payout_structure_numerators
+            assert_eq!(
+                az_trading_competition
+                    .competition_payout_structure_numerators
+                    .get((0, payout_structure_numerators[0].0))
+                    .unwrap(),
+                payout_structure_numerators[0].1
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_payout_structure_numerators
+                    .get((0, payout_structure_numerators[1].0))
+                    .unwrap(),
+                payout_structure_numerators[1].1
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_payout_structure_numerators
+                    .get((0, payout_structure_numerators[2].0))
+                    .unwrap(),
+                payout_structure_numerators[2].1
+            );
+            // ======== * it updates the competition.payout_structure_numerator_sum
+            assert_eq!(
+                competition.payout_structure_numerator_sum,
+                PAYOUT_STRUCTURE_DENOMINATOR
+            );
+            // ======== when competition.payout_places is greater than the highest position in payout_structure_numerators
+            // ======== * it does not change competition.payout_places
+            payout_structure_numerators.pop();
+            az_trading_competition
+                .competition_payout_structure_numerators_update(
+                    0,
+                    payout_structure_numerators.clone(),
+                )
+                .unwrap();
+            assert_eq!(competition.payout_places, 3);
         }
 
         #[ink::test]
