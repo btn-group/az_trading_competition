@@ -368,9 +368,15 @@ mod az_trading_competition {
         #[ink(message)]
         pub fn register(&mut self, id: u64) -> Result<()> {
             let mut competition: Competition = self.competitions_show(id)?;
-            // 1. Validate that time is before start
+            // 1. Validate that numerator is equal to denominator
+            if competition.payout_structure_numerator_sum != PAYOUT_STRUCTURE_DENOMINATOR {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Payout structure is not set yet.".to_string(),
+                ));
+            }
+            // 2. Validate that time is before start
             self.competition_has_not_started(competition.start)?;
-            // 2. Validate that user hasn't registered already
+            // 3. Validate that user hasn't registered already
             let caller: AccountId = Self::env().caller();
             if self
                 .competition_token_users
@@ -382,7 +388,7 @@ mod az_trading_competition {
                 ));
             }
 
-            // 3. Acquire token from caller
+            // 4. Acquire token from caller
             self.acquire_psp22(
                 competition.entry_fee_token,
                 caller,
@@ -839,8 +845,6 @@ mod az_trading_competition {
                 ))
             );
             // ==== when all payout_structure_numerators have a zero position or have a position before with a numerator set
-            payout_structure_numerators =
-                vec![(0, 1), (1, 2), (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1)];
             // ===== when a numerator is zero
             payout_structure_numerators = vec![
                 (0, 1),
@@ -951,8 +955,20 @@ mod az_trading_competition {
                     MOCK_ENTRY_FEE_AMOUNT,
                 )
                 .unwrap();
-
-            // when competition has started
+            // = when competition numerator does not equal denominator
+            // = * it raises an error
+            let result = az_trading_competition.register(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Payout structure is not set yet.".to_string(),
+                ))
+            );
+            // = when competition numerator equals denominator
+            let mut competition: Competition = az_trading_competition.competitions_show(0).unwrap();
+            competition.payout_structure_numerator_sum = PAYOUT_STRUCTURE_DENOMINATOR;
+            az_trading_competition.competitions.insert(0, &competition);
+            // == when competition has started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
             // * it raises an error
             let result = az_trading_competition.register(0);
@@ -962,14 +978,14 @@ mod az_trading_competition {
                     "Competition has started".to_string(),
                 ))
             );
-            // when competition has not started
+            // == when competition has not started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
-            // = when user has registered already
+            // == when user has registered already
             az_trading_competition.competition_token_users.insert(
                 (0, mock_entry_fee_token(), accounts.bob),
                 &MOCK_ENTRY_FEE_AMOUNT,
             );
-            // = * it raises an error
+            // == * it raises an error
             let result = az_trading_competition.register(0);
             assert_eq!(
                 result,
