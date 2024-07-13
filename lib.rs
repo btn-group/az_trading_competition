@@ -427,9 +427,15 @@ mod az_trading_competition {
 
             let in_token = path[0];
             let out_token = path[path.len() - 1];
-            // 1. Validate that competition is in progress
+            // 1. Validate that there's enough users in competition
+            if competition.user_count < competition.payout_places.into() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition is invalid, please deregister.".to_string(),
+                ));
+            }
+            // 2. Validate that competition is in progress
             self.competition_is_in_progress(competition.clone())?;
-            // 2. Validate that user is part of the competition
+            // 3. Validate that user is part of the competition
             let caller: AccountId = Self::env().caller();
             if self
                 .competition_token_users
@@ -440,7 +446,7 @@ mod az_trading_competition {
                     "You are not registered for this competition.".to_string(),
                 ));
             }
-            // 3. Validate that path is valid
+            // 4. Validate that path is valid
             let mut previous_token: Option<AccountId> = None;
             for token in path.iter() {
                 if previous_token.is_some() {
@@ -461,7 +467,7 @@ mod az_trading_competition {
                 }
                 previous_token = Some(*token)
             }
-            // 4. Check that user has enough to cover amount_in
+            // 5. Check that user has enough to cover amount_in
             if amount_in
                 > self
                     .competition_token_users
@@ -472,14 +478,14 @@ mod az_trading_competition {
                     "Insufficient balance.".to_string(),
                 ));
             }
-            // 5. Check that deadline is less than or equal to end
+            // 6. Check that deadline is less than or equal to end
             if deadline > competition.end {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Deadline is after competition end.".to_string(),
                 ));
             }
 
-            // 6. Call router
+            // 7. Call router
             const SWAP_EXACT_TOKENS_FOR_TOKENS_SELECTOR: [u8; 4] =
                 ink::selector_bytes!("swap_exact_tokens_for_tokens");
             let result_of_swaps: Vec<u128> = build_call::<Environment>()
@@ -495,7 +501,7 @@ mod az_trading_competition {
                 .returns::<core::result::Result<Vec<u128>, RouterError>>()
                 .invoke()?;
             let out_amount: u128 = result_of_swaps[result_of_swaps.len() - 1];
-            // 7. Adjust user balances
+            // 8. Adjust user balances
             // Decrease amount_in for competition token user
             let in_competition_token_user_balance: Balance = self
                 .competition_token_users
@@ -1049,7 +1055,27 @@ mod az_trading_competition {
                 AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
                 AccountId::try_from(*b"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb").unwrap(),
             ];
-            // == when competition hasn't started
+            // == when competition user count is less than payout places
+            let mut competition: Competition = az_trading_competition.competitions_show(0).unwrap();
+            competition.payout_places = 1;
+            az_trading_competition.competitions.insert(0, &competition);
+            let result = az_trading_competition.swap_exact_tokens_for_tokens(
+                id,
+                amount_in,
+                amount_out_min,
+                path.clone(),
+                deadline,
+            );
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition is invalid, please deregister.".to_string(),
+                ))
+            );
+            // == when competition user count is greater than or equal to payout places
+            competition.user_count = competition.payout_places.into();
+            az_trading_competition.competitions.insert(0, &competition);
+            // === when competition hasn't started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
             // = * it raises an error
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
@@ -1065,11 +1091,11 @@ mod az_trading_competition {
                     "Competition isn't in progress.".to_string(),
                 ))
             );
-            // == when competition has ended
+            // === when competition has ended
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
                 MOCK_START + MINIMUM_DURATION + 1,
             );
-            // == * it raises an error
+            // === * it raises an error
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
                 amount_in,
@@ -1083,12 +1109,12 @@ mod az_trading_competition {
                     "Competition isn't in progress.".to_string(),
                 ))
             );
-            // == when competition is in progress
+            // === when competition is in progress
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
                 MOCK_START + MINIMUM_DURATION,
             );
-            // === when user is not registered
-            // === * it raises an error
+            // ==== when user is not registered
+            // ==== * it raises an error
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
                 amount_in,
@@ -1102,11 +1128,11 @@ mod az_trading_competition {
                     "You are not registered for this competition.".to_string(),
                 ))
             );
-            // === when user is registered
+            // ==== when user is registered
             az_trading_competition
                 .competition_token_users
                 .insert((0, mock_entry_fee_token(), accounts.bob), &0);
-            // ==== when any of the tokens in path are invalid
+            // ===== when any of the tokens in path are invalid
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
                 amount_in,
@@ -1120,19 +1146,19 @@ mod az_trading_competition {
                     "Path is invalid.".to_string(),
                 ))
             );
-            // ==== when path is valid
+            // ===== when path is valid
             path = vec![
                 AccountId::try_from(*b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa").unwrap(),
                 AccountId::try_from(*b"xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx").unwrap(),
                 AccountId::try_from(*b"tttttttttttttttttttttttttttttttt").unwrap(),
             ];
-            // ===== when amount_in is greater than what is available to user
+            // ====== when amount_in is greater than what is available to user
             amount_in = az_trading_competition
                 .competition_token_users
                 .get((id, path[0], accounts.bob))
                 .unwrap_or(0)
                 + 1;
-            // ===== * it raises an error
+            // ====== * it raises an error
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
                 amount_in,
@@ -1146,13 +1172,13 @@ mod az_trading_competition {
                     "Insufficient balance.".to_string(),
                 ))
             );
-            // ===== when amount_in is available to user
+            // ====== when amount_in is available to user
             amount_in = az_trading_competition
                 .competition_token_users
                 .get((id, path[0], accounts.bob))
                 .unwrap_or(0);
-            // ====== when deadline is greater than competition end
-            // ====== * it raises an error
+            // ======= when deadline is greater than competition end
+            // ======= * it raises an error
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
                 amount_in,
@@ -1166,8 +1192,8 @@ mod az_trading_competition {
                     "Deadline is after competition end.".to_string(),
                 ))
             );
-            // ====== when deadline is <= competition.end
-            // ====== THE REST NEEDS TO HAPPEN IN INTEGRATION TESTS
+            // ======= when deadline is <= competition.end
+            // ======= THE REST NEEDS TO HAPPEN IN INTEGRATION TESTS
         }
     }
 }
