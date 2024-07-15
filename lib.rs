@@ -63,6 +63,7 @@ mod az_trading_competition {
     }
 
     // === CONSTANTS ===
+    const DIA_USD_DECIMALS_FACTOR: Balance = 1_000_000_000_000_000_000;
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
     const PAYOUT_STRUCTURE_DENOMINATOR: u16 = 10_000;
@@ -74,9 +75,9 @@ mod az_trading_competition {
     pub struct Config {
         pub admin: AccountId,
         pub router: AccountId,
-        pub oracle: AccountId,
+        pub dia: AccountId,
         pub competitions_count: u64,
-        pub dia_price_symbols_vec: Vec<(AccountId, String)>,
+        pub token_dia_price_symbols_vec: Vec<(AccountId, String)>,
         pub allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
     }
 
@@ -94,51 +95,56 @@ mod az_trading_competition {
         pub creator: AccountId,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
+        pub token_prices_vec: Vec<(Timestamp, Balance)>,
         pub user_count: u32,
     }
 
     // === CONTRACT ===
     #[ink(storage)]
     pub struct AzTradingCompetition {
+        allowed_pair_token_combinations_mapping: Mapping<AccountId, Vec<AccountId>>,
+        allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
         admin: AccountId,
-        router: AccountId,
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
+        competition_token_prices: Mapping<(u64, AccountId), Balance>,
         competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
         competitions_count: u64,
         competitions: Mapping<u64, Competition>,
-        oracle: AccountId,
-        dia_price_symbols: Mapping<AccountId, String>,
-        dia_price_symbols_vec: Vec<(AccountId, String)>,
-        allowed_pair_token_combinations: Mapping<AccountId, Vec<AccountId>>,
-        allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
+        dia: AccountId,
+        dia_price_symbol_tokens_mapping: Mapping<String, AccountId>,
+        router: AccountId,
+        token_dia_price_symbols_mapping: Mapping<AccountId, String>,
+        token_dia_price_symbols_vec: Vec<(AccountId, String)>,
     }
     impl AzTradingCompetition {
         #[ink(constructor)]
         pub fn new(
-            router: AccountId,
-            oracle: AccountId,
-            dia_price_symbols_vec: Vec<(AccountId, String)>,
             allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
+            dia: AccountId,
+            router: AccountId,
+            token_dia_price_symbols_vec: Vec<(AccountId, String)>,
         ) -> Result<Self> {
             let mut x = Self {
                 admin: Self::env().caller(),
-                router,
+                allowed_pair_token_combinations_mapping: Mapping::default(),
+                allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
                 competition_payout_structure_numerators: Mapping::default(),
+                competition_token_prices: Mapping::default(),
                 competition_token_users: Mapping::default(),
                 competitions_count: 0,
                 competitions: Mapping::default(),
-                oracle,
-                dia_price_symbols: Mapping::default(),
-                dia_price_symbols_vec: dia_price_symbols_vec.clone(),
-                allowed_pair_token_combinations: Mapping::default(),
-                allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
+                dia,
+                dia_price_symbol_tokens_mapping: Mapping::default(),
+                router,
+                token_dia_price_symbols_mapping: Mapping::default(),
+                token_dia_price_symbols_vec: token_dia_price_symbols_vec.clone(),
             };
-            for token_dia_price_symbol_combo in dia_price_symbols_vec.iter() {
-                if VALID_DIA_PRICE_SYMBOLS.contains(&&token_dia_price_symbol_combo.1[..]) {
-                    x.dia_price_symbols.insert(
-                        token_dia_price_symbol_combo.0,
-                        &token_dia_price_symbol_combo.1,
-                    );
+            for token_dia_price_symbol in token_dia_price_symbols_vec.iter() {
+                if VALID_DIA_PRICE_SYMBOLS.contains(&&token_dia_price_symbol.1[..]) {
+                    x.token_dia_price_symbols_mapping
+                        .insert(token_dia_price_symbol.0, &token_dia_price_symbol.1);
+                    x.dia_price_symbol_tokens_mapping
+                        .insert(token_dia_price_symbol.1.clone(), &token_dia_price_symbol.0);
                 } else {
                     return Err(AzTradingCompetitionError::UnprocessableEntity(
                         "Invalid DIA price symbol.".to_string(),
@@ -146,10 +152,10 @@ mod az_trading_competition {
                 }
             }
             for allowed_pair_token_combination in allowed_pair_token_combinations_vec.iter() {
-                if x.dia_price_symbols
+                if x.token_dia_price_symbols_mapping
                     .get(allowed_pair_token_combination.0)
                     .is_none()
-                    || x.dia_price_symbols
+                    || x.token_dia_price_symbols_mapping
                         .get(allowed_pair_token_combination.1)
                         .is_none()
                 {
@@ -158,27 +164,27 @@ mod az_trading_competition {
                     ));
                 } else {
                     if let Some(mut allowed_to_tokens) = x
-                        .allowed_pair_token_combinations
+                        .allowed_pair_token_combinations_mapping
                         .get(allowed_pair_token_combination.0)
                     {
                         allowed_to_tokens.push(allowed_pair_token_combination.1);
-                        x.allowed_pair_token_combinations
+                        x.allowed_pair_token_combinations_mapping
                             .insert(allowed_pair_token_combination.0, &allowed_to_tokens);
                     } else {
-                        x.allowed_pair_token_combinations.insert(
+                        x.allowed_pair_token_combinations_mapping.insert(
                             allowed_pair_token_combination.0,
                             &vec![allowed_pair_token_combination.1],
                         );
                     }
                     if let Some(mut allowed_to_tokens) = x
-                        .allowed_pair_token_combinations
+                        .allowed_pair_token_combinations_mapping
                         .get(allowed_pair_token_combination.1)
                     {
                         allowed_to_tokens.push(allowed_pair_token_combination.0);
-                        x.allowed_pair_token_combinations
+                        x.allowed_pair_token_combinations_mapping
                             .insert(allowed_pair_token_combination.1, &allowed_to_tokens);
                     } else {
-                        x.allowed_pair_token_combinations.insert(
+                        x.allowed_pair_token_combinations_mapping.insert(
                             allowed_pair_token_combination.1,
                             &vec![allowed_pair_token_combination.0],
                         );
@@ -216,12 +222,29 @@ mod az_trading_competition {
                 admin: self.admin,
                 router: self.router,
                 competitions_count: self.competitions_count,
-                oracle: self.oracle,
-                dia_price_symbols_vec: self.dia_price_symbols_vec.clone(),
+                dia: self.dia,
+                token_dia_price_symbols_vec: self.token_dia_price_symbols_vec.clone(),
                 allowed_pair_token_combinations_vec: self
                     .allowed_pair_token_combinations_vec
                     .clone(),
             }
+        }
+
+        #[ink(message)]
+        pub fn get_latest_prices_from_dia(&self) -> Vec<Option<(Timestamp, Balance)>> {
+            let dia_price_symbols_as_strings: Vec<String> = VALID_DIA_PRICE_SYMBOLS
+                .iter()
+                .map(|w| w.to_string())
+                .collect::<Vec<String>>();
+            build_call::<Environment>()
+                .call(self.dia)
+                .exec_input(
+                    ExecutionInput::new(Selector::new(ink::selector_bytes!("get_latest_prices")))
+                        .push_arg(dia_price_symbols_as_strings),
+                )
+                .returns::<Result<Vec<Option<(u64, u128)>>>>()
+                .invoke()
+                .unwrap()
         }
 
         // === HANDLES ===
@@ -248,7 +271,11 @@ mod az_trading_competition {
                     "Entry fee amount must be positive".to_string(),
                 ));
             }
-            if self.dia_price_symbols.get(entry_fee_token).is_none() {
+            if self
+                .token_dia_price_symbols_mapping
+                .get(entry_fee_token)
+                .is_none()
+            {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Entry fee token is not permitted.".to_string(),
                 ));
@@ -263,6 +290,7 @@ mod az_trading_competition {
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
                 creator: Self::env().caller(),
+                token_prices_vec: vec![],
                 user_count: 0,
             };
             self.competitions
@@ -369,6 +397,39 @@ mod az_trading_competition {
             );
 
             Ok(competition.payout_structure_numerator_sum)
+        }
+
+        #[ink(message)]
+        pub fn competition_token_prices_update(&mut self, id: u64) -> Result<()> {
+            let mut competition: Competition = self.competitions_show(id)?;
+            self.validate_competition_has_ended(competition.end)?;
+            // Validate that prices haven't been retrieved already
+            if !competition.token_prices_vec.is_empty() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Token prices for competition already set.".to_string(),
+                ));
+            }
+
+            let prices: Vec<Option<(Timestamp, Balance)>> = self.get_latest_prices_from_dia();
+            for (index, price_details) in prices.iter().enumerate() {
+                if let Some(price_details_unwrapped) = price_details {
+                    competition.token_prices_vec.push(*price_details_unwrapped);
+                    let price_symbol: String = VALID_DIA_PRICE_SYMBOLS[index].to_string();
+                    let token: AccountId = self
+                        .dia_price_symbol_tokens_mapping
+                        .get(price_symbol)
+                        .unwrap();
+                    self.competition_token_prices
+                        .insert((id, token), &price_details_unwrapped.1);
+                } else {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Price details from DIA unavailable.".to_string(),
+                    ));
+                }
+            }
+            self.competitions.insert(id, &competition);
+
+            Ok(())
         }
 
         #[ink(message)]
@@ -511,7 +572,7 @@ mod az_trading_competition {
                 if previous_token.is_some() {
                     let mut valid = false;
                     if let Some(to_tokens) = self
-                        .allowed_pair_token_combinations
+                        .allowed_pair_token_combinations_mapping
                         .get(previous_token.unwrap())
                     {
                         if to_tokens.iter().any(|&i| i == *token) {
@@ -621,6 +682,16 @@ mod az_trading_competition {
         fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
             emitter.emit_event(event);
         }
+
+        fn validate_competition_has_ended(&self, end: Timestamp) -> Result<()> {
+            if Self::env().block_timestamp() <= end {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't ended.".to_string(),
+                ));
+            }
+
+            Ok(())
+        }
     }
 
     #[cfg(test)]
@@ -641,10 +712,10 @@ mod az_trading_competition {
             let accounts = default_accounts();
             set_caller::<DefaultEnvironment>(accounts.bob);
             let az_trading_competition = AzTradingCompetition::new(
-                mock_router_address(),
-                mock_oracle_address(),
-                mock_token_to_dia_price_symbol_combos(),
                 mock_allowed_pair_token_combinations(),
+                mock_dia_address(),
+                mock_router_address(),
+                mock_token_to_dia_price_symbol_combos(),
             );
             (accounts, az_trading_competition.expect("REASON"))
         }
@@ -699,7 +770,7 @@ mod az_trading_competition {
             accounts.django
         }
 
-        fn mock_oracle_address() -> AccountId {
+        fn mock_dia_address() -> AccountId {
             let accounts: DefaultAccounts<DefaultEnvironment> = default_accounts();
             accounts.frank
         }
@@ -712,9 +783,9 @@ mod az_trading_competition {
             // * it returns the config
             assert_eq!(config.admin, az_trading_competition.admin);
             assert_eq!(config.router, az_trading_competition.router);
-            assert_eq!(config.oracle, mock_oracle_address());
+            assert_eq!(config.dia, mock_dia_address());
             assert_eq!(
-                config.dia_price_symbols_vec,
+                config.token_dia_price_symbols_vec,
                 mock_token_to_dia_price_symbol_combos()
             );
             assert_eq!(
@@ -780,7 +851,7 @@ mod az_trading_competition {
             let result = az_trading_competition.competitions_create(
                 MOCK_START,
                 MOCK_START + MINIMUM_DURATION,
-                mock_oracle_address(),
+                mock_dia_address(),
                 MOCK_ENTRY_FEE_AMOUNT,
             );
             // === * it raises an error
@@ -980,6 +1051,55 @@ mod az_trading_competition {
                 )
                 .unwrap();
             assert_eq!(competition.payout_places, 3);
+        }
+
+        #[ink::test]
+        fn test_competition_token_prices_update() {
+            let (_accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.competition_token_prices_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                )
+                .unwrap();
+            // = when competition has not ended
+            // = * it raises an error
+            let result = az_trading_competition.competition_token_prices_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't ended.".to_string(),
+                ))
+            );
+            // = when competition has ended
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                MOCK_START + MINIMUM_DURATION + 1,
+            );
+            // == when final prices have already been recorded
+            let mut competition: Competition = az_trading_competition.competitions.get(0).unwrap();
+            competition.token_prices_vec = vec![(5, 5)];
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            let result = az_trading_competition.competition_token_prices_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Token prices for competition already set.".to_string(),
+                ))
+            );
         }
 
         #[ink::test]
