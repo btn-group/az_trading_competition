@@ -404,7 +404,7 @@ mod az_trading_competition {
             let mut competition: Competition = self.competitions_show(id)?;
             self.validate_competition_has_ended(competition.end)?;
             // Validate that prices haven't been retrieved already
-            if competition.token_prices_vec.len() > 0 {
+            if !competition.token_prices_vec.is_empty() {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Token prices for competition already set.".to_string(),
                 ));
