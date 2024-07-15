@@ -22,6 +22,12 @@ mod az_trading_competition {
 
     // === EVENTS ===
     #[ink(event)]
+    pub struct CollectAdminFee {
+        #[ink(topic)]
+        id: u64,
+    }
+
+    #[ink(event)]
     pub struct CompetitionsCreate {
         #[ink(topic)]
         id: u64,
@@ -99,6 +105,7 @@ mod az_trading_competition {
         pub end: Timestamp,
         pub entry_fee_token: AccountId,
         pub entry_fee_amount: Balance,
+        pub admin_fee_collected: bool,
         pub admin_fee_percentage_numerator: u16,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
@@ -318,6 +325,7 @@ mod az_trading_competition {
                 end,
                 entry_fee_token,
                 entry_fee_amount,
+                admin_fee_collected: false,
                 admin_fee_percentage_numerator: competition_admin_fee_percentage_numerator,
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
@@ -355,7 +363,7 @@ mod az_trading_competition {
             let caller: AccountId = Self::env().caller();
             let mut competition: Competition = self.competitions_show(id)?;
             Self::authorise(competition.creator, caller)?;
-            self.competition_has_not_started(competition.start)?;
+            self.validate_competition_has_not_started(competition.start)?;
             if competition.user_count > 0 {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Unable to change when registrants present.".to_string(),
@@ -466,6 +474,46 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn collect_competition_admin_fee(&mut self, id: u64) -> Result<Balance> {
+            // 1. Validate caller is admin
+            let caller: AccountId = Self::env().caller();
+            Self::authorise(self.admin, caller)?;
+            // 2. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 3. Validate that competition has started
+            self.validate_competition_has_started(competition.start)?;
+            // 4. Validate that user count is greater than or equal to payout_places
+            if competition.user_count < competition.payout_places.into() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't met minimum user requirements.".to_string(),
+                ));
+            }
+            // 5. Validate that admin fee hasn't been collected yet
+            if competition.admin_fee_collected {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Admin fee has already been colleted.".to_string(),
+                ));
+            }
+            // 6. Transfer admin fee to admin
+            let admin_fee: Balance = Balance::from(competition.user_count)
+                * (U256::from(competition.entry_fee_amount)
+                    * U256::from(competition.admin_fee_percentage_numerator)
+                    / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
+                .as_u128();
+            PSP22Ref::transfer_builder(&competition.entry_fee_token, caller, admin_fee, vec![])
+                .call_flags(CallFlags::default())
+                .invoke()?;
+            // 7. Update competition.admin_fee_collected
+            competition.admin_fee_collected = true;
+            self.competitions.insert(id, &competition);
+
+            // emit event
+            Self::emit_event(self.env(), Event::CollectAdminFee(CollectAdminFee { id }));
+
+            Ok(admin_fee)
+        }
+
+        #[ink(message)]
         pub fn deregister(&mut self, id: u64) -> Result<()> {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
@@ -530,7 +578,7 @@ mod az_trading_competition {
                 ));
             }
             // 2. Validate that time is before start
-            self.competition_has_not_started(competition.start)?;
+            self.validate_competition_has_not_started(competition.start)?;
             // 3. Validate that user hasn't registered already
             let caller: AccountId = Self::env().caller();
             if self
@@ -594,7 +642,7 @@ mod az_trading_competition {
                 ));
             }
             // 2. Validate that competition is in progress
-            self.competition_is_in_progress(competition.clone())?;
+            self.validate_competition_is_in_progress(competition.clone())?;
             // 3. Validate that user has enough to cover amount_in
             let caller: AccountId = Self::env().caller();
             let in_balance: Balance =
@@ -695,7 +743,21 @@ mod az_trading_competition {
             Ok(())
         }
 
-        fn competition_has_not_started(&self, start: Timestamp) -> Result<()> {
+        fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
+            emitter.emit_event(event);
+        }
+
+        fn validate_competition_has_ended(&self, end: Timestamp) -> Result<()> {
+            if Self::env().block_timestamp() <= end {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't ended.".to_string(),
+                ));
+            }
+
+            Ok(())
+        }
+
+        fn validate_competition_has_not_started(&self, start: Timestamp) -> Result<()> {
             if Self::env().block_timestamp() >= start {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Competition has started".to_string(),
@@ -705,26 +767,22 @@ mod az_trading_competition {
             Ok(())
         }
 
-        fn competition_is_in_progress(&self, competition: Competition) -> Result<()> {
-            if Self::env().block_timestamp() < competition.start
-                || Self::env().block_timestamp() > competition.end
-            {
+        fn validate_competition_has_started(&self, start: Timestamp) -> Result<()> {
+            if Self::env().block_timestamp() < start {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Competition isn't in progress.".to_string(),
+                    "Competition hasn't started".to_string(),
                 ));
             }
 
             Ok(())
         }
 
-        fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
-            emitter.emit_event(event);
-        }
-
-        fn validate_competition_has_ended(&self, end: Timestamp) -> Result<()> {
-            if Self::env().block_timestamp() <= end {
+        fn validate_competition_is_in_progress(&self, competition: Competition) -> Result<()> {
+            if Self::env().block_timestamp() < competition.start
+                || Self::env().block_timestamp() > competition.end
+            {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Competition hasn't ended.".to_string(),
+                    "Competition isn't in progress.".to_string(),
                 ));
             }
 
@@ -842,6 +900,82 @@ mod az_trading_competition {
         }
 
         // === TEST HANDLES ===
+        #[ink::test]
+        fn test_collect_competition_admin_fee() {
+            let (accounts, mut az_trading_competition) = init();
+            // when called by non-admin
+            set_caller::<DefaultEnvironment>(accounts.charlie);
+            let result = az_trading_competition.collect_competition_admin_fee(0);
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+            // when called by admin
+            set_caller::<DefaultEnvironment>(accounts.bob);
+            // = when competition does not exist
+            // = * it raises an error
+            let result = az_trading_competition.collect_competition_admin_fee(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // = when competition exists
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                )
+                .unwrap();
+            // == when competition hasn't started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
+            // == * it raises an error
+            let result = az_trading_competition.collect_competition_admin_fee(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't started".to_string(),
+                ))
+            );
+            // == when competition has started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
+            // === when competition has not met minimum user requirements
+            let mut competition = az_trading_competition.competitions.get(0).unwrap();
+            competition.payout_places = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // === * it raises an error
+            let result = az_trading_competition.collect_competition_admin_fee(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't met minimum user requirements.".to_string(),
+                ))
+            );
+            // === when competition has met minimum user requirements
+            competition.user_count = (competition.payout_places + 1).into();
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // ==== when competition admin fee has already been collected
+            competition.admin_fee_collected = true;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // ==== * it raises an error
+            let result = az_trading_competition.collect_competition_admin_fee(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Admin fee has already been colleted.".to_string(),
+                ))
+            );
+            // ==== when competition admin fee hasn't been collected
+            // ==== NEED TO DO IN INTEGRATION TEST
+        }
+
         #[ink::test]
         fn test_competitions_create() {
             let (accounts, mut az_trading_competition) = init();
