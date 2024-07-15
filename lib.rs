@@ -66,7 +66,7 @@ mod az_trading_competition {
     const DIA_USD_DECIMALS_FACTOR: Balance = 1_000_000_000_000_000_000;
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
-    const PAYOUT_STRUCTURE_DENOMINATOR: u16 = 10_000;
+    const PERCENTAGE_CALCULATION_DENOMINATOR: u16 = 10_000;
     const VALID_DIA_PRICE_SYMBOLS: &[&str] = &["AZERO/USD", "ETH/USD", "USDC/USD", "USDT/USD"];
 
     // === STRUCTS ===
@@ -74,11 +74,13 @@ mod az_trading_competition {
     #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
     pub struct Config {
         pub admin: AccountId,
-        pub router: AccountId,
-        pub dia: AccountId,
-        pub competitions_count: u64,
-        pub token_dia_price_symbols_vec: Vec<(AccountId, String)>,
         pub allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
+        pub competitions_count: u64,
+        pub dia: AccountId,
+        pub minimum_duration: Timestamp,
+        pub percentage_calculation_denominator: u16,
+        pub router: AccountId,
+        pub token_dia_price_symbols_vec: Vec<(AccountId, String)>,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -220,13 +222,15 @@ mod az_trading_competition {
         pub fn config(&self) -> Config {
             Config {
                 admin: self.admin,
-                router: self.router,
-                competitions_count: self.competitions_count,
-                dia: self.dia,
-                token_dia_price_symbols_vec: self.token_dia_price_symbols_vec.clone(),
                 allowed_pair_token_combinations_vec: self
                     .allowed_pair_token_combinations_vec
                     .clone(),
+                competitions_count: self.competitions_count,
+                dia: self.dia,
+                minimum_duration: MINIMUM_DURATION,
+                percentage_calculation_denominator: PERCENTAGE_CALCULATION_DENOMINATOR,
+                router: self.router,
+                token_dia_price_symbols_vec: self.token_dia_price_symbols_vec.clone(),
             }
         }
 
@@ -370,7 +374,7 @@ mod az_trading_competition {
                 competition.payout_structure_numerator_sum -= previous_numerator;
             }
             // 6. Check that numerator sum is less than or equal to denominator
-            if competition.payout_structure_numerator_sum > PAYOUT_STRUCTURE_DENOMINATOR {
+            if competition.payout_structure_numerator_sum > PERCENTAGE_CALCULATION_DENOMINATOR {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Numerator is greater than denominator.".to_string(),
                 ));
@@ -491,7 +495,7 @@ mod az_trading_competition {
         pub fn register(&mut self, id: u64) -> Result<()> {
             let mut competition: Competition = self.competitions_show(id)?;
             // 1. Validate that numerator is equal to denominator
-            if competition.payout_structure_numerator_sum != PAYOUT_STRUCTURE_DENOMINATOR {
+            if competition.payout_structure_numerator_sum != PERCENTAGE_CALCULATION_DENOMINATOR {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Payout structure is not set yet.".to_string(),
                 ));
@@ -782,15 +786,20 @@ mod az_trading_competition {
             let config = az_trading_competition.config();
             // * it returns the config
             assert_eq!(config.admin, az_trading_competition.admin);
-            assert_eq!(config.router, az_trading_competition.router);
-            assert_eq!(config.dia, mock_dia_address());
-            assert_eq!(
-                config.token_dia_price_symbols_vec,
-                mock_token_to_dia_price_symbol_combos()
-            );
             assert_eq!(
                 config.allowed_pair_token_combinations_vec,
                 mock_allowed_pair_token_combinations()
+            );
+            assert_eq!(config.dia, mock_dia_address());
+            assert_eq!(config.minimum_duration, MINIMUM_DURATION);
+            assert_eq!(
+                config.percentage_calculation_denominator,
+                PERCENTAGE_CALCULATION_DENOMINATOR
+            );
+            assert_eq!(config.router, az_trading_competition.router);
+            assert_eq!(
+                config.token_dia_price_symbols_vec,
+                mock_token_to_dia_price_symbol_combos()
             );
         }
 
@@ -968,7 +977,7 @@ mod az_trading_competition {
             payout_structure_numerators = vec![
                 (0, 1),
                 (1, 2),
-                (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1),
+                (2, PERCENTAGE_CALCULATION_DENOMINATOR - 2 - 1),
                 (3, 0),
             ];
             // ===== * it raises an error
@@ -987,7 +996,7 @@ mod az_trading_competition {
             payout_structure_numerators = vec![
                 (0, 1),
                 (1, 2),
-                (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1),
+                (2, PERCENTAGE_CALCULATION_DENOMINATOR - 2 - 1),
                 (3, 1),
             ];
             // // ======= * it raises an error
@@ -1002,8 +1011,11 @@ mod az_trading_competition {
                 ))
             );
             // // ======= when new numerators causes the sum of numerators to be less than or equal to denominator
-            payout_structure_numerators =
-                vec![(0, 1), (1, 2), (2, PAYOUT_STRUCTURE_DENOMINATOR - 2 - 1)];
+            payout_structure_numerators = vec![
+                (0, 1),
+                (1, 2),
+                (2, PERCENTAGE_CALCULATION_DENOMINATOR - 2 - 1),
+            ];
             // ======== when competition.payout_places is less than or equal to the highest position in payout_structure_numerators
             // ======== * it updates the payout_places to the highest position + 1
             az_trading_competition
@@ -1039,7 +1051,7 @@ mod az_trading_competition {
             // ======== * it updates the competition.payout_structure_numerator_sum
             assert_eq!(
                 competition.payout_structure_numerator_sum,
-                PAYOUT_STRUCTURE_DENOMINATOR
+                PERCENTAGE_CALCULATION_DENOMINATOR
             );
             // ======== when competition.payout_places is greater than the highest position in payout_structure_numerators
             // ======== * it does not change competition.payout_places
@@ -1188,7 +1200,7 @@ mod az_trading_competition {
             );
             // = when competition numerator equals denominator
             let mut competition: Competition = az_trading_competition.competitions_show(0).unwrap();
-            competition.payout_structure_numerator_sum = PAYOUT_STRUCTURE_DENOMINATOR;
+            competition.payout_structure_numerator_sum = PERCENTAGE_CALCULATION_DENOMINATOR;
             az_trading_competition.competitions.insert(0, &competition);
             // == when competition has started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
