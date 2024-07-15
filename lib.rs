@@ -14,6 +14,7 @@ mod az_trading_competition {
         storage::Mapping,
     };
     use openbrush::contracts::psp22::PSP22Ref;
+    use primitive_types::U256;
 
     // === TYPES ===
     type Event = <AzTradingCompetition as ContractEventBase>::Type;
@@ -548,12 +549,17 @@ mod az_trading_competition {
                 caller,
                 competition.entry_fee_amount,
             )?;
-            // 4. Set balance of token users
+            // 5. Figure out admin fee
+            let admin_fee: Balance = (U256::from(competition.entry_fee_amount)
+                * U256::from(competition.admin_fee_percentage_numerator)
+                / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
+            .as_u128();
+            // 6. Set balance of competition token user
             self.competition_token_users.insert(
                 (id, competition.entry_fee_token, caller),
-                &competition.entry_fee_amount,
+                &(competition.entry_fee_amount - admin_fee),
             );
-            // 5. Increase competition.user_count
+            // 7. Increase competition.user_count
             competition.user_count += 1;
             self.competitions.insert(competition.id, &competition);
 
