@@ -63,6 +63,8 @@ mod az_trading_competition {
     }
 
     // === CONSTANTS ===
+    // 10% of entry fee
+    const DEFAULT_FEE_PERCENTAGE_NUMERATOR: u16 = 1_000;
     const DIA_USD_DECIMALS_FACTOR: Balance = 1_000_000_000_000_000_000;
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
@@ -76,6 +78,7 @@ mod az_trading_competition {
         pub admin: AccountId,
         pub allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
         pub competitions_count: u64,
+        pub default_fee_percentage_numerator: u16,
         pub dia: AccountId,
         pub minimum_duration: Timestamp,
         pub percentage_calculation_denominator: u16,
@@ -226,6 +229,7 @@ mod az_trading_competition {
                     .allowed_pair_token_combinations_vec
                     .clone(),
                 competitions_count: self.competitions_count,
+                default_fee_percentage_numerator: DEFAULT_FEE_PERCENTAGE_NUMERATOR,
                 dia: self.dia,
                 minimum_duration: MINIMUM_DURATION,
                 percentage_calculation_denominator: PERCENTAGE_CALCULATION_DENOMINATOR,
@@ -789,6 +793,10 @@ mod az_trading_competition {
             assert_eq!(
                 config.allowed_pair_token_combinations_vec,
                 mock_allowed_pair_token_combinations()
+            );
+            assert_eq!(
+                config.default_fee_percentage_numerator,
+                DEFAULT_FEE_PERCENTAGE_NUMERATOR
             );
             assert_eq!(config.dia, mock_dia_address());
             assert_eq!(config.minimum_duration, MINIMUM_DURATION);
