@@ -102,7 +102,7 @@ mod az_trading_competition {
     // === CONTRACT ===
     #[ink(storage)]
     pub struct AzTradingCompetition {
-        allowed_pair_token_combinations: Mapping<AccountId, Vec<AccountId>>,
+        allowed_pair_token_combinations_mapping: Mapping<AccountId, Vec<AccountId>>,
         allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
         admin: AccountId,
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
@@ -126,7 +126,7 @@ mod az_trading_competition {
         ) -> Result<Self> {
             let mut x = Self {
                 admin: Self::env().caller(),
-                allowed_pair_token_combinations: Mapping::default(),
+                allowed_pair_token_combinations_mapping: Mapping::default(),
                 allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
                 competition_payout_structure_numerators: Mapping::default(),
                 competition_token_prices: Mapping::default(),
@@ -164,27 +164,27 @@ mod az_trading_competition {
                     ));
                 } else {
                     if let Some(mut allowed_to_tokens) = x
-                        .allowed_pair_token_combinations
+                        .allowed_pair_token_combinations_mapping
                         .get(allowed_pair_token_combination.0)
                     {
                         allowed_to_tokens.push(allowed_pair_token_combination.1);
-                        x.allowed_pair_token_combinations
+                        x.allowed_pair_token_combinations_mapping
                             .insert(allowed_pair_token_combination.0, &allowed_to_tokens);
                     } else {
-                        x.allowed_pair_token_combinations.insert(
+                        x.allowed_pair_token_combinations_mapping.insert(
                             allowed_pair_token_combination.0,
                             &vec![allowed_pair_token_combination.1],
                         );
                     }
                     if let Some(mut allowed_to_tokens) = x
-                        .allowed_pair_token_combinations
+                        .allowed_pair_token_combinations_mapping
                         .get(allowed_pair_token_combination.1)
                     {
                         allowed_to_tokens.push(allowed_pair_token_combination.0);
-                        x.allowed_pair_token_combinations
+                        x.allowed_pair_token_combinations_mapping
                             .insert(allowed_pair_token_combination.1, &allowed_to_tokens);
                     } else {
-                        x.allowed_pair_token_combinations.insert(
+                        x.allowed_pair_token_combinations_mapping.insert(
                             allowed_pair_token_combination.1,
                             &vec![allowed_pair_token_combination.0],
                         );
@@ -572,7 +572,7 @@ mod az_trading_competition {
                 if previous_token.is_some() {
                     let mut valid = false;
                     if let Some(to_tokens) = self
-                        .allowed_pair_token_combinations
+                        .allowed_pair_token_combinations_mapping
                         .get(previous_token.unwrap())
                     {
                         if to_tokens.iter().any(|&i| i == *token) {
