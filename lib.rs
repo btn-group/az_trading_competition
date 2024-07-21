@@ -40,6 +40,13 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct CompetitionUserFinalValueUpdate {
+        id: u64,
+        user: AccountId,
+        value: String,
+    }
+
+    #[ink(event)]
     pub struct Deregister {
         #[ink(topic)]
         id: u64,
@@ -112,7 +119,7 @@ mod az_trading_competition {
         pub payout_winning_price_and_user_counts: Vec<(String, u32)>,
         pub token_prices_vec: Vec<(Timestamp, Balance)>,
         pub user_count: u32,
-        pub user_final_usd_value_updated_count: u32,
+        pub user_final_value_updated_count: u32,
         pub creator: AccountId,
     }
 
@@ -122,7 +129,7 @@ mod az_trading_competition {
         derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
     )]
     pub struct CompetitionUser {
-        pub final_usd_value: Option<String>,
+        pub final_value: Option<String>,
     }
 
     // === CONTRACT ===
@@ -355,7 +362,7 @@ mod az_trading_competition {
                 creator: caller,
                 token_prices_vec: vec![],
                 user_count: 0,
-                user_final_usd_value_updated_count: 0,
+                user_final_value_updated_count: 0,
             };
             self.competitions
                 .insert(self.competitions_count, &competition);
@@ -539,6 +546,71 @@ mod az_trading_competition {
             Ok(admin_fee)
         }
 
+        // This isn't the final USD value as it doesn't factor in each token's decimal points.
+        // Doesn't matter though as it can still be used to find out who the winners are.
+        #[ink(message)]
+        pub fn competition_user_final_value_update(
+            &mut self,
+            id: u64,
+            user: AccountId,
+        ) -> Result<String> {
+            // 1. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 2. Validate competition has ended
+            self.validate_competition_has_ended(competition.clone())?;
+            // 3. Get CompetitionUser
+            let mut competition_user: CompetitionUser = self.competition_users_show(id, user)?;
+            // 4. Validate CompetitionUser hasn't been processed
+            if competition_user.final_value.is_some() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "CompetitionUser already processed.".to_string(),
+                ));
+            }
+            // 5. Validate competition token prices have been set
+            if competition.token_prices_vec.is_empty() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Token prices haven't been set.".to_string(),
+                ));
+            }
+
+            // 6. Calculate usd value
+            let mut user_value: U256 = U256::from(0);
+            for dia_price_symbol in VALID_DIA_PRICE_SYMBOLS.iter() {
+                let token: AccountId = self
+                    .dia_price_symbol_tokens_mapping
+                    .get(dia_price_symbol.to_string())
+                    .unwrap();
+                let price: Balance = self
+                    .competition_token_prices
+                    .get((competition.id, token))
+                    .unwrap();
+                let token_balance: Balance = self
+                    .competition_token_users
+                    .get((id, token, user))
+                    .unwrap_or(0);
+                user_value += U256::from(price) * U256::from(token_balance)
+            }
+            // 6. Set final_value
+            let user_value_as_string: String = user_value.to_string();
+            competition_user.final_value = Some(user_value_as_string.clone());
+            self.competition_users.insert((id, user), &competition_user);
+            // 7. Increase competition.user_final_value_updated_count
+            competition.user_final_value_updated_count += 1;
+            self.competitions.insert(competition.id, &competition);
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::CompetitionUserFinalValueUpdate(CompetitionUserFinalValueUpdate {
+                    id: competition.id,
+                    user,
+                    value: user_value_as_string.clone(),
+                }),
+            );
+
+            Ok(user_value_as_string)
+        }
+
         #[ink(message)]
         pub fn deregister(&mut self, id: u64) -> Result<()> {
             // 1. Get competition
@@ -595,55 +667,6 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn final_usd_value_update(&mut self, id: u64, user: AccountId) -> Result<String> {
-            // 1. Get competition
-            let mut competition: Competition = self.competitions_show(id)?;
-            // 2. Validate competition has ended
-            self.validate_competition_has_ended(competition.clone())?;
-            // 3. Get CompetitionUser
-            let mut competition_user: CompetitionUser = self.competition_users_show(id, user)?;
-            // 4. Validate CompetitionUser hasn't been processed
-            if competition_user.final_usd_value.is_some() {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "CompetitionUser already processed.".to_string(),
-                ));
-            }
-            // 5. Validate competition token prices have been set
-            if competition.token_prices_vec.is_empty() {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Token prices haven't been set.".to_string(),
-                ));
-            }
-
-            // 6. Calculate usd value
-            let mut user_usd_value: U256 = U256::from(0);
-            for dia_price_symbol in VALID_DIA_PRICE_SYMBOLS.iter() {
-                let token: AccountId = self
-                    .dia_price_symbol_tokens_mapping
-                    .get(dia_price_symbol.to_string())
-                    .unwrap();
-                let price: Balance = self
-                    .competition_token_prices
-                    .get((competition.id, token))
-                    .unwrap();
-                let token_balance: Balance = self
-                    .competition_token_users
-                    .get((id, token, user))
-                    .unwrap_or(0);
-                user_usd_value += U256::from(price) * U256::from(token_balance)
-            }
-            // 6. Set final_usd_value
-            let user_usd_value_as_string: String = user_usd_value.to_string();
-            competition_user.final_usd_value = Some(user_usd_value_as_string.clone());
-            self.competition_users.insert((id, user), &competition_user);
-            // 7. Increase competition.user_final_usd_value_updated_count
-            competition.user_final_usd_value_updated_count += 1;
-            self.competitions.insert(competition.id, &competition);
-
-            Ok(user_usd_value_as_string)
-        }
-
-        #[ink(message)]
         pub fn register(&mut self, id: u64) -> Result<()> {
             let mut competition: Competition = self.competitions_show(id)?;
             // 1. Validate that numerator is equal to denominator
@@ -688,9 +711,7 @@ mod az_trading_competition {
             // 8. Create CompetitionUser
             self.competition_users.insert(
                 (competition.id, caller),
-                &CompetitionUser {
-                    final_usd_value: None,
-                },
+                &CompetitionUser { final_value: None },
             );
 
             // emit event
@@ -1483,11 +1504,12 @@ mod az_trading_competition {
         }
 
         #[ink::test]
-        fn test_final_usd_value_update() {
+        fn test_final_value_update() {
             let (accounts, mut az_trading_competition) = init();
             // when competition does not exist
             // * it raises an error
-            let result = az_trading_competition.final_usd_value_update(0, accounts.bob);
+            let result =
+                az_trading_competition.competition_user_final_value_update(0, accounts.bob);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::NotFound(
@@ -1507,7 +1529,8 @@ mod az_trading_competition {
             // = when competition hasn't ended
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(competition.end);
             // = * it raises an error
-            let result = az_trading_competition.final_usd_value_update(0, accounts.bob);
+            let result =
+                az_trading_competition.competition_user_final_value_update(0, accounts.bob);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -1519,7 +1542,8 @@ mod az_trading_competition {
                 competition.end + 1,
             );
             // == when CompetitionUser doesn't exist
-            let result = az_trading_competition.final_usd_value_update(0, accounts.bob);
+            let result =
+                az_trading_competition.competition_user_final_value_update(0, accounts.bob);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::NotFound(
@@ -1528,28 +1552,30 @@ mod az_trading_competition {
             );
             // == when CompetitionUser exists
             let mut competition_user: CompetitionUser = CompetitionUser {
-                final_usd_value: Some(0.to_string()),
+                final_value: Some(0.to_string()),
             };
             az_trading_competition
                 .competition_users
                 .insert((0, accounts.bob), &competition_user);
             // === when CompetitionUser is processed already
             // === * it raises an error
-            let result = az_trading_competition.final_usd_value_update(0, accounts.bob);
+            let result =
+                az_trading_competition.competition_user_final_value_update(0, accounts.bob);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
                     "CompetitionUser already processed.".to_string(),
                 ))
             );
-            // === when CompetitionUser doesn't have final_usd_value
-            competition_user.final_usd_value = None;
+            // === when CompetitionUser doesn't have final_value
+            competition_user.final_value = None;
             az_trading_competition
                 .competition_users
                 .insert((0, accounts.bob), &competition_user);
             // ==== when competion token prices haven't been set
             // ==== * it raises an error
-            let result = az_trading_competition.final_usd_value_update(0, accounts.bob);
+            let result =
+                az_trading_competition.competition_user_final_value_update(0, accounts.bob);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -1586,22 +1612,22 @@ mod az_trading_competition {
                 usd_usd_value += competition.token_prices_vec[index].1
             }
             az_trading_competition
-                .final_usd_value_update(0, accounts.bob)
+                .competition_user_final_value_update(0, accounts.bob)
                 .unwrap();
-            // ==== * it sets the final_usd_value for the user
-            let final_usd_value: String = az_trading_competition
+            // ==== * it sets the final_value for the user
+            let final_value: String = az_trading_competition
                 .competition_users
                 .get((competition.id, accounts.bob))
                 .unwrap()
-                .final_usd_value
+                .final_value
                 .unwrap();
-            assert_eq!(final_usd_value, usd_usd_value.to_string());
-            // ==== * it increases the competition.user_final_usd_value_updated_count by one
+            assert_eq!(final_value, usd_usd_value.to_string());
+            // ==== * it increases the competition.user_final_value_updated_count by one
             competition = az_trading_competition
                 .competitions
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(competition.user_final_usd_value_updated_count, 1)
+            assert_eq!(competition.user_final_value_updated_count, 1)
         }
 
         #[ink::test]
