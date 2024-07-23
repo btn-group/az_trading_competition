@@ -614,18 +614,17 @@ mod az_trading_competition {
                 * U256::from(FINAL_VALUE_UPDATE_FEE_PERCENTAGE_NUMERATOR)
                 / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR))
             .as_u128();
-            if processing_fee > 0 {
-                if self
+            if processing_fee > 0
+                && self
                     .env()
                     .transfer(Self::env().caller(), processing_fee)
                     .is_err()
-                {
-                    panic!(
-                        "requested transfer failed. this can be the case if the contract does not\
+            {
+                panic!(
+                    "requested transfer failed. this can be the case if the contract does not\
                          have sufficient free funds or if the transfer would have brought the\
                          contract's balance below minimum balance."
-                    )
-                }
+                )
             }
 
             // emit event
