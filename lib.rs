@@ -85,6 +85,7 @@ mod az_trading_competition {
     // Minimum 1 hour
     const MINIMUM_DURATION: Timestamp = 3_600_000;
     const PERCENTAGE_CALCULATION_DENOMINATOR: u16 = 10_000;
+    const FINAL_VALUE_UPDATE_FEE_PERCENTAGE_NUMERATOR: u16 = 1_000;
     const VALID_DIA_PRICE_SYMBOLS: &[&str] = &["AZERO/USD", "ETH/USD", "USDC/USD", "USDT/USD"];
 
     // === STRUCTS ===
@@ -557,9 +558,8 @@ mod az_trading_competition {
             Ok(admin_fee)
         }
 
-        // 1. This isn't the final USD value as it doesn't factor in each token's decimal points.
-        //    Doesn't matter though as it can still be used to find out who the winners are.
-        // 2. There needs to be an incentive for this, as there can be a possibility of up to 65k users.
+        // This isn't the final USD value as it doesn't factor in each token's decimal points.
+        // Doesn't matter though as it can still be used to find out who the winners are.
         #[ink(message)]
         pub fn competition_user_final_value_update(
             &mut self,
@@ -602,13 +602,31 @@ mod az_trading_competition {
                     .unwrap_or(0);
                 user_value += U256::from(price) * U256::from(token_balance)
             }
-            // 6. Set final_value
+            // 7. Set final_value
             let user_value_as_string: String = user_value.to_string();
             competition_user.final_value = Some(user_value_as_string.clone());
             self.competition_users.insert((id, user), &competition_user);
-            // 7. Increase competition.user_final_value_updated_count
+            // 8. Increase competition.user_final_value_updated_count
             competition.user_final_value_updated_count += 1;
             self.competitions.insert(competition.id, &competition);
+            // 9. Send processing fee to caller
+            let processing_fee: Balance = (U256::from(competition.azero_processing_fee)
+                * U256::from(FINAL_VALUE_UPDATE_FEE_PERCENTAGE_NUMERATOR)
+                / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR))
+            .as_u128();
+            if processing_fee > 0 {
+                if self
+                    .env()
+                    .transfer(Self::env().caller(), processing_fee)
+                    .is_err()
+                {
+                    panic!(
+                        "requested transfer failed. this can be the case if the contract does not\
+                         have sufficient free funds or if the transfer would have brought the\
+                         contract's balance below minimum balance."
+                    )
+                }
+            }
 
             // emit event
             Self::emit_event(
@@ -949,6 +967,19 @@ mod az_trading_competition {
                 mock_token_to_dia_price_symbol_combos(),
             );
             (accounts, az_trading_competition.expect("REASON"))
+        }
+
+        fn contract_id() -> AccountId {
+            ink::env::test::callee::<ink::env::DefaultEnvironment>()
+        }
+
+        fn get_balance(account_id: AccountId) -> Balance {
+            ink::env::test::get_account_balance::<ink::env::DefaultEnvironment>(account_id)
+                .expect("Cannot get account balance")
+        }
+
+        fn set_balance(account_id: AccountId, balance: Balance) {
+            ink::env::test::set_account_balance::<ink::env::DefaultEnvironment>(account_id, balance)
         }
 
         fn mock_token_to_dia_price_symbol_combos() -> Vec<(AccountId, String)> {
@@ -1575,7 +1606,7 @@ mod az_trading_competition {
         }
 
         #[ink::test]
-        fn test_final_value_update() {
+        fn test_competition_user_final_value_update() {
             let (accounts, mut az_trading_competition) = init();
             // when competition does not exist
             // * it raises an error
@@ -1683,6 +1714,11 @@ mod az_trading_competition {
                 );
                 usd_usd_value += competition.token_prices_vec[index].1
             }
+            set_balance(
+                contract_id(),
+                MOCK_DEFAULT_AZERO_PROCESSING_FEE * 100 / 1000,
+            );
+            let caller_balance: Balance = get_balance(accounts.bob);
             az_trading_competition
                 .competition_user_final_value_update(0, accounts.bob)
                 .unwrap();
@@ -1699,7 +1735,14 @@ mod az_trading_competition {
                 .competitions
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(competition.user_final_value_updated_count, 1)
+            assert_eq!(competition.user_final_value_updated_count, 1);
+            // ==== * it sends the caller 10% of the azero_processing_fee
+            assert!(get_balance(accounts.bob) > caller_balance);
+            assert!(
+                get_balance(accounts.bob)
+                    < (caller_balance + MOCK_DEFAULT_AZERO_PROCESSING_FEE * 110 / 1000)
+            );
+            assert_eq!(0, get_balance(contract_id()))
         }
 
         #[ink::test]
