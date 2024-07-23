@@ -678,7 +678,7 @@ mod az_trading_competition {
             Ok(())
         }
 
-        #[ink(message)]
+        #[ink(message, payable)]
         pub fn register(&mut self, id: u64) -> Result<()> {
             let mut competition: Competition = self.competitions_show(id)?;
             // 1. Validate that numerator is equal to denominator
@@ -700,27 +700,33 @@ mod az_trading_competition {
                     "Already registered".to_string(),
                 ));
             }
+            // 4. Validate that azero processing fee has been paid
+            if self.env().transferred_value() != competition.azero_processing_fee {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Please include AZERO processing fee.".to_string(),
+                ));
+            }
 
-            // 4. Acquire token from caller
+            // 5. Acquire token from caller
             self.acquire_psp22(
                 competition.entry_fee_token,
                 caller,
                 competition.entry_fee_amount,
             )?;
-            // 5. Figure out admin fee
+            // 6. Figure out admin fee
             let admin_fee: Balance = (U256::from(competition.entry_fee_amount)
                 * U256::from(competition.admin_fee_percentage_numerator)
                 / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
             .as_u128();
-            // 6. Set balance of competition token user
+            // 7. Set balance of competition token user
             self.competition_token_users.insert(
                 (id, competition.entry_fee_token, caller),
                 &(competition.entry_fee_amount - admin_fee),
             );
-            // 7. Increase competition.user_count
+            // 8. Increase competition.user_count
             competition.user_count += 1;
             self.competitions.insert(competition.id, &competition);
-            // 8. Create CompetitionUser
+            // 9. Create CompetitionUser
             self.competition_users.insert(
                 (competition.id, caller),
                 &CompetitionUser { final_value: None },
@@ -1732,7 +1738,7 @@ mod az_trading_competition {
             );
             // == when competition has not started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
-            // == when user has registered already
+            // === when user has registered already
             az_trading_competition.competition_token_users.insert(
                 (0, mock_entry_fee_token(), accounts.bob),
                 &MOCK_ENTRY_FEE_AMOUNT,
@@ -1745,7 +1751,22 @@ mod az_trading_competition {
                     "Already registered".to_string(),
                 ))
             );
-            // == the rest needs to be done in integration tests
+            // === when user has not registered yet
+            az_trading_competition.competition_token_users.remove((
+                0,
+                mock_entry_fee_token(),
+                accounts.bob,
+            ));
+            // === when azero_processing fee has not been sent
+            // === * it raises an error
+            let result = az_trading_competition.register(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Please include AZERO processing fee.".to_string(),
+                ))
+            );
+            // === the rest needs to be done in integration tests
         }
 
         #[ink::test]
