@@ -655,6 +655,18 @@ mod az_trading_competition {
             // 6. Update competition
             competition.user_count -= 1;
             self.competitions.insert(id, &competition);
+            // 7. Transfer funds to buyer
+            if self
+                .env()
+                .transfer(caller, competition.azero_processing_fee)
+                .is_err()
+            {
+                panic!(
+                    "requested transfer failed. this can be the case if the contract does not\
+                     have sufficient free funds or if the transfer would have brought the\
+                     contract's balance below minimum balance."
+                )
+            }
 
             // emit event
             Self::emit_event(
