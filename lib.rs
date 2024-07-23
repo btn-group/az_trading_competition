@@ -94,6 +94,7 @@ mod az_trading_competition {
         pub allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
         pub competitions_count: u64,
         pub default_admin_fee_percentage_numerator: u16,
+        pub default_azero_processing_fee: Balance,
         pub dia: AccountId,
         pub minimum_duration: Timestamp,
         pub percentage_calculation_denominator: u16,
@@ -144,6 +145,7 @@ mod az_trading_competition {
         competition_users: Mapping<(u64, AccountId), CompetitionUser>,
         competitions: Mapping<u64, Competition>,
         competitions_count: u64,
+        default_azero_processing_fee: Balance,
         dia: AccountId,
         dia_price_symbol_tokens_mapping: Mapping<String, AccountId>,
         router: AccountId,
@@ -154,6 +156,7 @@ mod az_trading_competition {
         #[ink(constructor)]
         pub fn new(
             allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
+            default_azero_processing_fee: Balance,
             dia: AccountId,
             router: AccountId,
             token_dia_price_symbols_vec: Vec<(AccountId, String)>,
@@ -168,6 +171,7 @@ mod az_trading_competition {
                 competition_users: Mapping::default(),
                 competitions: Mapping::default(),
                 competitions_count: 0,
+                default_azero_processing_fee,
                 dia,
                 dia_price_symbol_tokens_mapping: Mapping::default(),
                 router,
@@ -269,6 +273,7 @@ mod az_trading_competition {
                     .clone(),
                 competitions_count: self.competitions_count,
                 default_admin_fee_percentage_numerator: DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR,
+                default_azero_processing_fee: self.default_azero_processing_fee,
                 dia: self.dia,
                 minimum_duration: MINIMUM_DURATION,
                 percentage_calculation_denominator: PERCENTAGE_CALCULATION_DENOMINATOR,
@@ -903,6 +908,7 @@ mod az_trading_competition {
         };
 
         // === CONSTANTS ===
+        const MOCK_DEFAULT_AZERO_PROCESSING_FEE: Balance = 1_000_000_000_000;
         const MOCK_ENTRY_FEE_AMOUNT: Balance = 555_555;
         const MOCK_START: Timestamp = 654_654;
         const MOCK_END: Timestamp = 754_654;
@@ -913,6 +919,7 @@ mod az_trading_competition {
             set_caller::<DefaultEnvironment>(accounts.bob);
             let az_trading_competition = AzTradingCompetition::new(
                 mock_allowed_pair_token_combinations(),
+                MOCK_DEFAULT_AZERO_PROCESSING_FEE,
                 mock_dia_address(),
                 mock_router_address(),
                 mock_token_to_dia_price_symbol_combos(),
@@ -989,6 +996,10 @@ mod az_trading_competition {
             assert_eq!(
                 config.default_admin_fee_percentage_numerator,
                 DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR
+            );
+            assert_eq!(
+                config.default_azero_processing_fee,
+                MOCK_DEFAULT_AZERO_PROCESSING_FEE
             );
             assert_eq!(config.dia, mock_dia_address());
             assert_eq!(config.minimum_duration, MINIMUM_DURATION);
