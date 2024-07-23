@@ -36,6 +36,7 @@ mod az_trading_competition {
         entry_fee_token: AccountId,
         entry_fee_amount: Balance,
         admin_fee_percentage_numerator: u16,
+        azero_processing_fee: Balance,
         creator: AccountId,
     }
 
@@ -115,6 +116,7 @@ mod az_trading_competition {
         pub entry_fee_amount: Balance,
         pub admin_fee_collected: bool,
         pub admin_fee_percentage_numerator: u16,
+        pub azero_processing_fee: Balance,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
         pub payout_winning_price_and_user_counts: Vec<(String, u32)>,
@@ -308,6 +310,7 @@ mod az_trading_competition {
             entry_fee_token: AccountId,
             entry_fee_amount: Balance,
             admin_fee_percentage_numerator: Option<u16>,
+            azero_processing_fee: Option<Balance>,
         ) -> Result<Competition> {
             let caller: AccountId = Self::env().caller();
             if self.competitions_count == u64::MAX {
@@ -361,6 +364,8 @@ mod az_trading_competition {
                 entry_fee_amount,
                 admin_fee_collected: false,
                 admin_fee_percentage_numerator: competition_admin_fee_percentage_numerator,
+                azero_processing_fee: azero_processing_fee
+                    .unwrap_or(self.default_azero_processing_fee),
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
                 payout_winning_price_and_user_counts: vec![],
@@ -383,6 +388,7 @@ mod az_trading_competition {
                     entry_fee_token: competition.entry_fee_token,
                     entry_fee_amount: competition.entry_fee_amount,
                     admin_fee_percentage_numerator: competition_admin_fee_percentage_numerator,
+                    azero_processing_fee: competition.azero_processing_fee,
                     creator: caller,
                 }),
             );
@@ -1041,6 +1047,7 @@ mod az_trading_competition {
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
                     None,
+                    None,
                 )
                 .unwrap();
             // == when competition hasn't started
@@ -1103,6 +1110,7 @@ mod az_trading_competition {
                 mock_entry_fee_token(),
                 MOCK_ENTRY_FEE_AMOUNT,
                 None,
+                None,
             );
             assert_eq!(
                 result,
@@ -1111,13 +1119,14 @@ mod az_trading_competition {
                 ))
             );
             // when competitions_count is less than u64 max
-            az_trading_competition.competitions_count = u64::MAX - 2;
+            az_trading_competition.competitions_count = u64::MAX - 3;
             // = when duration is less than or equal to MINIMUM_DURATION
             let result = az_trading_competition.competitions_create(
                 MOCK_START,
                 MOCK_START + MINIMUM_DURATION - 1,
                 mock_entry_fee_token(),
                 MOCK_ENTRY_FEE_AMOUNT,
+                None,
                 None,
             );
             // = * it raises an error
@@ -1135,6 +1144,7 @@ mod az_trading_competition {
                 mock_entry_fee_token(),
                 0,
                 None,
+                None,
             );
             // == * it raises an error
             assert_eq!(
@@ -1144,13 +1154,14 @@ mod az_trading_competition {
                 ))
             );
             // == when fee amount is positive
-            let competitions_count: u64 = az_trading_competition.competitions_count;
+            let mut competitions_count: u64 = az_trading_competition.competitions_count;
             // === when fee token doesn't have a dia price symbol
             let result = az_trading_competition.competitions_create(
                 MOCK_START,
                 MOCK_START + MINIMUM_DURATION,
                 mock_dia_address(),
                 MOCK_ENTRY_FEE_AMOUNT,
+                None,
                 None,
             );
             // === * it raises an error
@@ -1168,16 +1179,40 @@ mod az_trading_competition {
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
                     None,
+                    None,
                 )
                 .unwrap();
+            // ==== when azero_processing_fee is not present
+            // ==== * it stores the competition with the default_azero_processing_fee
+            let mut competition = az_trading_competition
+                .competitions
+                .get(&competitions_count)
+                .unwrap();
+            assert_eq!(
+                competition.azero_processing_fee,
+                MOCK_DEFAULT_AZERO_PROCESSING_FEE
+            );
+            // ==== when azero_processing_fee is present
+            // ==== * it stores the competition with the provided azero_processing_fee
+            competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    Some(MOCK_DEFAULT_AZERO_PROCESSING_FEE - 1),
+                )
+                .unwrap();
+            competitions_count += 1;
+            assert_eq!(
+                competition.azero_processing_fee,
+                MOCK_DEFAULT_AZERO_PROCESSING_FEE - 1
+            );
             // ==== when admin_fee_percentage_numerator is not present
             // ==== * it stores the competition with default fee percentage numerator
             assert_eq!(
-                az_trading_competition
-                    .competitions
-                    .get(&competitions_count)
-                    .unwrap()
-                    .admin_fee_percentage_numerator,
+                competition.admin_fee_percentage_numerator,
                 DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR
             );
             // ==== * it increases the competitions_count by 1
@@ -1197,6 +1232,7 @@ mod az_trading_competition {
                 mock_entry_fee_token(),
                 MOCK_ENTRY_FEE_AMOUNT,
                 admin_fee_percentage_numerator,
+                None,
             );
             assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
             // ===== when called by admin
@@ -1209,6 +1245,7 @@ mod az_trading_competition {
                 mock_entry_fee_token(),
                 MOCK_ENTRY_FEE_AMOUNT,
                 admin_fee_percentage_numerator,
+                None,
             );
             assert_eq!(
                 result,
@@ -1226,6 +1263,7 @@ mod az_trading_competition {
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
                     admin_fee_percentage_numerator,
+                    None,
                 )
                 .unwrap();
             assert_eq!(
@@ -1261,6 +1299,7 @@ mod az_trading_competition {
                     MOCK_START + MINIMUM_DURATION,
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
+                    None,
                     None,
                 )
                 .unwrap();
@@ -1430,6 +1469,7 @@ mod az_trading_competition {
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
                     None,
+                    None,
                 )
                 .unwrap();
             // = when competition has not ended
@@ -1479,6 +1519,7 @@ mod az_trading_competition {
                     MOCK_START + MINIMUM_DURATION,
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
+                    None,
                     None,
                 )
                 .unwrap();
@@ -1535,6 +1576,7 @@ mod az_trading_competition {
                     MOCK_START + MINIMUM_DURATION,
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
+                    None,
                     None,
                 )
                 .unwrap();
@@ -1662,6 +1704,7 @@ mod az_trading_competition {
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
                     None,
+                    None,
                 )
                 .unwrap();
             // = when competition numerator does not equal denominator
@@ -1735,6 +1778,7 @@ mod az_trading_competition {
                     MOCK_START + MINIMUM_DURATION,
                     mock_entry_fee_token(),
                     MOCK_ENTRY_FEE_AMOUNT,
+                    None,
                     None,
                 )
                 .unwrap();
