@@ -747,6 +747,14 @@ mod az_trading_competition {
             Ok(())
         }
 
+        // #[ink(message)]
+        // pub fn reset(&mut self, id: u64, users: Vec<AccountId>) -> Result<()> {
+
+        // }
+
+        #[ink(message)]
+        pub fn place_users(&mut self, id: u64, users: Vec<AccountId>) -> Result<()> {}
+
         // This can be called by anyone
         #[ink(message)]
         pub fn judge_update(&mut self, id: u64) -> Result<()> {
