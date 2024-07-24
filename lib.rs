@@ -79,6 +79,7 @@ mod az_trading_competition {
     }
 
     // === CONSTANTS ===
+    const DAY_IN_MS: Timestamp = 86_400_000;
     // 10% of entry fee
     const DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR: u16 = 1_000;
     const DIA_USD_DECIMALS_FACTOR: Balance = 1_000_000_000_000_000_000;
@@ -118,13 +119,25 @@ mod az_trading_competition {
         pub admin_fee_collected: bool,
         pub admin_fee_percentage_numerator: u16,
         pub azero_processing_fee: Balance,
+        pub judge: AccountId,
+        pub next_judge: Option<AccountId>,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
         pub payout_winning_price_and_user_counts: Vec<(String, u32)>,
         pub token_prices_vec: Vec<(Timestamp, Balance)>,
         pub user_count: u32,
         pub user_final_value_updated_count: u32,
+        pub user_placed_count: u32,
         pub creator: AccountId,
+    }
+
+    #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
+    pub struct CompetitionJudge {
+        pub deadline: Timestamp,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -142,6 +155,7 @@ mod az_trading_competition {
         allowed_pair_token_combinations_mapping: Mapping<AccountId, Vec<AccountId>>,
         allowed_pair_token_combinations_vec: Vec<(AccountId, AccountId)>,
         admin: AccountId,
+        competition_judges: Mapping<(u64, AccountId), CompetitionJudge>,
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
         competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
@@ -168,6 +182,7 @@ mod az_trading_competition {
                 admin: Self::env().caller(),
                 allowed_pair_token_combinations_mapping: Mapping::default(),
                 allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
+                competition_judges: Mapping::default(),
                 competition_payout_structure_numerators: Mapping::default(),
                 competition_token_prices: Mapping::default(),
                 competition_token_users: Mapping::default(),
@@ -304,6 +319,35 @@ mod az_trading_competition {
 
         // === HANDLES ===
         #[ink(message)]
+        pub fn apply_to_place_users(&mut self, id: u64) -> Result<()> {
+            let caller: AccountId = Self::env().caller();
+            // 1. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 2. Validate that user hasn't been a competition admin yet
+            if self.competition_judges.get((id, caller)).is_some() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "You can only be a competition admin one time.".to_string(),
+                ));
+            }
+            // 3. Validate that all users haven't been placed yet
+            if competition.user_placed_count == competition.user_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have been placed.".to_string(),
+                ));
+            }
+
+            if competition.next_judge.is_some() {}
+
+            // 3. Validate that current timestamp is less than 24 hours from current placer's deadline or after
+            // 4. If current timestamp is before current placer's deadline, if there is another applicant, validate that current applicant has a
+            // high final_value than current applicant.
+            // 6. Set user as the current nomination
+            // 7. Insert into competiton admins
+
+            Ok(())
+        }
+
+        #[ink(message)]
         pub fn competitions_create(
             &mut self,
             start: Timestamp,
@@ -367,6 +411,8 @@ mod az_trading_competition {
                 admin_fee_percentage_numerator: competition_admin_fee_percentage_numerator,
                 azero_processing_fee: azero_processing_fee
                     .unwrap_or(self.default_azero_processing_fee),
+                judge: self.admin,
+                next_judge: None,
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
                 payout_winning_price_and_user_counts: vec![],
@@ -374,10 +420,17 @@ mod az_trading_competition {
                 token_prices_vec: vec![],
                 user_count: 0,
                 user_final_value_updated_count: 0,
+                user_placed_count: 0,
             };
             self.competitions
                 .insert(self.competitions_count, &competition);
             self.competitions_count += 1;
+            self.competition_judges.insert(
+                (competition.id, competition.judge),
+                &CompetitionJudge {
+                    deadline: competition.end + DAY_IN_MS,
+                },
+            );
 
             // emit event
             Self::emit_event(
@@ -1314,14 +1367,25 @@ mod az_trading_competition {
                     None,
                 )
                 .unwrap();
+            let competition: Competition = az_trading_competition
+                .competitions
+                .get(&competitions_count + 1)
+                .unwrap();
             assert_eq!(
-                az_trading_competition
-                    .competitions
-                    .get(&competitions_count + 1)
-                    .unwrap()
-                    .admin_fee_percentage_numerator,
+                competition.admin_fee_percentage_numerator,
                 admin_fee_percentage_numerator.unwrap(),
             );
+            // ======= * it sets the admin as the judge
+            assert_eq!(competition.judge, az_trading_competition.admin,);
+            // ======= * it stores the competition judge for the admin with the deadline 1 day after the competition end
+            assert_eq!(
+                competition.end + DAY_IN_MS,
+                az_trading_competition
+                    .competition_judges
+                    .get((competition.id, competition.judge))
+                    .unwrap()
+                    .deadline
+            )
         }
 
         #[ink::test]
