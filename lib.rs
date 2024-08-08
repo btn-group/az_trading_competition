@@ -318,6 +318,7 @@ mod az_trading_competition {
         }
 
         // === HANDLES ===
+        // When you apply to be a judge, and the person hasn’t accepted their role yet, the new application should do it for them so that they can become the next judge
         #[ink(message)]
         pub fn apply_to_place_users(&mut self, id: u64) -> Result<()> {
             let caller: AccountId = Self::env().caller();
@@ -336,7 +337,12 @@ mod az_trading_competition {
                 ));
             }
 
-            if competition.next_judge.is_some() {}
+            if let Some(next_judge_unwrapped) = competition.next_judge {
+            } else {
+                competition.next_judge = Some(caller);
+                self.competition_judges
+                    .insert((id, caller), &CompetitionJudge { deadline });
+            };
 
             // 3. Validate that current timestamp is less than 24 hours from current placer's deadline or after
             // 4. If current timestamp is before current placer's deadline, if there is another applicant, validate that current applicant has a
