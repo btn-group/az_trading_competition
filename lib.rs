@@ -339,9 +339,9 @@ mod az_trading_competition {
 
             if let Some(next_judge_unwrapped) = competition.next_judge {
             } else {
-                competition.next_judge = Some(caller);
-                self.competition_judges
-                    .insert((id, caller), &CompetitionJudge { deadline });
+                // competition.next_judge = Some(caller);
+                // self.competition_judges
+                //     .insert((id, caller), &CompetitionJudge { deadline });
             };
 
             // 3. Validate that current timestamp is less than 24 hours from current placer's deadline or after
