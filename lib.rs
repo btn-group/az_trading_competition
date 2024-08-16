@@ -55,6 +55,14 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct JudgeUpdate {
+        #[ink(topic)]
+        id: u64,
+        #[ink(topic)]
+        judge: AccountId,
+    }
+
+    #[ink(event)]
     pub struct NextJudgeUpdate {
         #[ink(topic)]
         id: u64,
@@ -739,6 +747,54 @@ mod az_trading_competition {
             Ok(())
         }
 
+        // This can be called by anyone
+        #[ink(message)]
+        pub fn judge_update(&mut self, id: u64) -> Result<()> {
+            // 1. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 2. Validate that user's haven't been placaed yet
+            if competition.user_placed_count == competition.user_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have been placed.".to_string(),
+                ));
+            }
+            // 3. Validate that next judge exists
+            if let Some(next_judge_unwrapped) = competition.next_judge {
+                let current_timestamp: Timestamp = Self::env().block_timestamp();
+                let current_judge_deadline: Timestamp = self
+                    .competition_judges
+                    .get((id, competition.judge))
+                    .unwrap()
+                    .deadline;
+                // 4. Validate that the current timestamp is after current judge deadline and before next judge deadline
+                if current_timestamp <= current_judge_deadline {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Current judge deadline hasn't passed.".to_string(),
+                    ));
+                }
+
+                // 5. Update judge and next_judge
+                competition.judge = next_judge_unwrapped;
+                competition.next_judge = None;
+                self.competitions.insert(id, &competition);
+            } else {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Next judge absent.".to_string(),
+                ));
+            };
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::JudgeUpdate(JudgeUpdate {
+                    id: competition.id,
+                    judge: competition.judge,
+                }),
+            );
+
+            Ok(())
+        }
+
         #[ink(message)]
         pub fn next_judge_update(&mut self, id: u64) -> Result<()> {
             let caller: AccountId = Self::env().caller();
@@ -756,7 +812,7 @@ mod az_trading_competition {
                     "All users have been placed.".to_string(),
                 ));
             }
-            // 4. Validate that caller performed better next next judge in specified competition
+            // 4. Validate that caller performed better next judge in specified competition
             if let Some(next_judge_unwrapped) = competition.next_judge {
                 let mut caller_final_value = U256::from(0);
                 let mut next_judge_final_value = U256::from(0);
