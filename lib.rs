@@ -55,6 +55,14 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct JudgeUpdate {
+        #[ink(topic)]
+        id: u64,
+        #[ink(topic)]
+        judge: AccountId,
+    }
+
+    #[ink(event)]
     pub struct NextJudgeUpdate {
         #[ink(topic)]
         id: u64,
@@ -739,6 +747,54 @@ mod az_trading_competition {
             Ok(())
         }
 
+        // This can be called by anyone
+        #[ink(message)]
+        pub fn judge_update(&mut self, id: u64) -> Result<()> {
+            // 1. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 2. Validate that user's haven't been placed yet
+            if competition.user_placed_count == competition.user_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have been placed.".to_string(),
+                ));
+            }
+            // 3. Validate that next judge exists
+            if let Some(next_judge_unwrapped) = competition.next_judge {
+                let current_timestamp: Timestamp = Self::env().block_timestamp();
+                let current_judge_deadline: Timestamp = self
+                    .competition_judges
+                    .get((id, competition.judge))
+                    .unwrap()
+                    .deadline;
+                // 4. Validate that the current timestamp is after current judge deadline and before next judge deadline
+                if current_timestamp <= current_judge_deadline {
+                    return Err(AzTradingCompetitionError::UnprocessableEntity(
+                        "Current judge deadline hasn't passed.".to_string(),
+                    ));
+                }
+
+                // 5. Update judge and next_judge
+                competition.judge = next_judge_unwrapped;
+                competition.next_judge = None;
+                self.competitions.insert(id, &competition);
+            } else {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Next judge absent.".to_string(),
+                ));
+            };
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::JudgeUpdate(JudgeUpdate {
+                    id: competition.id,
+                    judge: competition.judge,
+                }),
+            );
+
+            Ok(())
+        }
+
         #[ink(message)]
         pub fn next_judge_update(&mut self, id: u64) -> Result<()> {
             let caller: AccountId = Self::env().caller();
@@ -756,7 +812,7 @@ mod az_trading_competition {
                     "All users have been placed.".to_string(),
                 ));
             }
-            // 4. Validate that caller performed better next next judge in specified competition
+            // 4. Validate that caller performed better next judge in specified competition
             if let Some(next_judge_unwrapped) = competition.next_judge {
                 let mut caller_final_value = U256::from(0);
                 let mut next_judge_final_value = U256::from(0);
@@ -1859,6 +1915,83 @@ mod az_trading_competition {
                     < (caller_balance + MOCK_DEFAULT_AZERO_PROCESSING_FEE * 110 / 1000)
             );
             assert_eq!(0, get_balance(contract_id()))
+        }
+
+        #[ink::test]
+        fn test_judge_update() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            let mut competition: Competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // = when all of the competition's users have been placed
+            competition.user_count = 5;
+            competition.user_placed_count = 5;
+            az_trading_competition.competitions.insert(0, &competition);
+            // = * it raises an error
+            let result = az_trading_competition.judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have been placed.".to_string(),
+                ))
+            );
+            // = when all of the competition's users hasn't been placed
+            competition.user_count = 5;
+            competition.user_placed_count = 1;
+            az_trading_competition.competitions.insert(0, &competition);
+            // == when next judge does not exist
+            // == * it raises an error
+            let result = az_trading_competition.judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Next judge absent.".to_string(),
+                ))
+            );
+            // == when next judge exists
+            competition.next_judge = Some(accounts.django);
+            az_trading_competition.competitions.insert(0, &competition);
+            // === when current time is before or equal to current judge deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
+            az_trading_competition.competition_judges.insert(
+                (competition.id, competition.judge),
+                &CompetitionJudge {
+                    deadline: MOCK_START,
+                },
+            );
+            // === * it raises an error
+            let result = az_trading_competition.judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Current judge deadline hasn't passed.".to_string(),
+                ))
+            );
+            // === when current time is after current judge deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START + 1);
+            // === * it updates the judge
+            az_trading_competition.judge_update(0).unwrap();
+            competition = az_trading_competition.competitions.get(0).unwrap();
+            assert_eq!(competition.judge, accounts.django);
+            // === * it resets the next_judge
+            assert_eq!(competition.next_judge, None);
         }
 
         #[ink::test]
