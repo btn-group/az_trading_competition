@@ -796,20 +796,20 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn next_judge_update(&mut self, id: u64) -> Result<()> {
+        pub fn next_judge_update(&mut self, id: u64) -> Result<Competition> {
             let caller: AccountId = Self::env().caller();
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
-            // 2. Validate that user hasn't been a competition admin yet
-            if self.competition_judges.get((id, caller)).is_some() {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "You can only be a judge one time.".to_string(),
-                ));
-            }
-            // 3. Validate that all users haven't been placed yet
+            // 2. Validate that all users haven't been placed yet
             if competition.user_placed_count == competition.user_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "All users have been placed.".to_string(),
+                ));
+            }
+            // 3. Validate that user hasn't been a competition admin yet
+            if self.competition_judges.get((id, caller)).is_some() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "You can only be a judge one time.".to_string(),
                 ));
             }
             // 4. Validate that caller performed better next judge in specified competition
@@ -850,12 +850,18 @@ mod az_trading_competition {
             competition.next_judge = Some(caller);
             self.competitions.insert(id, &competition);
             // 6. Set competition judge
-            self.competition_judges.insert(
-                (id, caller),
-                &CompetitionJudge {
-                    deadline: Self::env().block_timestamp() + DAY_IN_MS,
-                },
-            );
+            let current_judge_deadline: Timestamp = self
+                .competition_judges
+                .get((competition.id, competition.judge))
+                .unwrap()
+                .deadline;
+            let deadline: Timestamp = if Self::env().block_timestamp() > current_judge_deadline {
+                Self::env().block_timestamp() + DAY_IN_MS
+            } else {
+                current_judge_deadline + DAY_IN_MS
+            };
+            self.competition_judges
+                .insert((id, caller), &CompetitionJudge { deadline });
 
             // emit event
             Self::emit_event(
@@ -866,7 +872,7 @@ mod az_trading_competition {
                 }),
             );
 
-            Ok(())
+            Ok(competition)
         }
 
         #[ink(message, payable)]
@@ -1992,6 +1998,123 @@ mod az_trading_competition {
             assert_eq!(competition.judge, accounts.django);
             // === * it resets the next_judge
             assert_eq!(competition.next_judge, None);
+        }
+
+        #[ink::test]
+        fn test_next_judge_update() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.next_judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            let mut competition: Competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // = when all of the competition's users have been placed
+            competition.user_count = 5;
+            competition.user_placed_count = 5;
+            az_trading_competition.competitions.insert(0, &competition);
+            // = * it raises an error
+            let result = az_trading_competition.next_judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have been placed.".to_string(),
+                ))
+            );
+            // = when all of the competition's users hasn't been placed
+            competition.user_count = 5;
+            competition.user_placed_count = 1;
+            az_trading_competition.competitions.insert(0, &competition);
+            // == when caller has been a competition judge before
+            // == * it raises an error
+            let result = az_trading_competition.next_judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "You can only be a judge one time.".to_string(),
+                ))
+            );
+            // == when caller has not been competition judge before
+            set_caller::<DefaultEnvironment>(accounts.charlie);
+            // === when next_judge is present
+            competition.next_judge = Some(accounts.django);
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // ==== when caller's final value in competition is less than or equal to next judge
+            // ==== * it raises an error
+            let result = az_trading_competition.next_judge_update(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Next judge can only be replaced by callers that performed better in specified competition.".to_string(),
+                ))
+            );
+            // ==== when caller's final value in competition is more than next judge
+            az_trading_competition.competition_users.insert(
+                (competition.id, accounts.charlie),
+                &CompetitionUser {
+                    final_value: Some("1".to_string()),
+                },
+            );
+            // ==== * it replaces the current next_judge with the caller
+            competition = az_trading_competition.next_judge_update(0).unwrap();
+            assert_eq!(competition.next_judge, Some(accounts.charlie));
+            // ==== * it removes the current next_judge's CompetitionJudge
+            assert!(az_trading_competition
+                .competition_judges
+                .get((0, accounts.django))
+                .is_none());
+            // ===== when current time is before or on current judge's deadline
+            // ===== * it sets the next judge's deadline as 24 hours from the current judge's deadline
+            let current_judge_deadline: Timestamp = az_trading_competition
+                .competition_judges
+                .get((0, competition.judge))
+                .unwrap()
+                .deadline;
+            assert_eq!(
+                az_trading_competition
+                    .competition_judges
+                    .get((0, accounts.charlie))
+                    .unwrap()
+                    .deadline,
+                current_judge_deadline + DAY_IN_MS
+            );
+            // ===== when current time is after current judge's deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                current_judge_deadline + 1,
+            );
+            competition.next_judge = None;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            az_trading_competition
+                .competition_judges
+                .remove((competition.id, accounts.charlie));
+            // ==== * it creates a CompetitionJudge for caller with deadline set to 24 hours after current judge deadline or 24 hours into the future, whichever is greater
+            az_trading_competition.next_judge_update(0).unwrap();
+            assert_eq!(
+                az_trading_competition
+                    .competition_judges
+                    .get((0, accounts.charlie))
+                    .unwrap()
+                    .deadline,
+                current_judge_deadline + 1 + DAY_IN_MS
+            );
         }
 
         #[ink::test]
