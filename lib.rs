@@ -136,6 +136,7 @@ mod az_trading_competition {
         pub admin_fee_percentage_numerator: u16,
         pub azero_processing_fee: Balance,
         pub judge: AccountId,
+        pub judge_place_attempt: u128,
         pub next_judge: Option<AccountId>,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
@@ -163,6 +164,7 @@ mod az_trading_competition {
     )]
     pub struct CompetitionUser {
         pub final_value: Option<String>,
+        pub judge_place_attempt: u128,
     }
 
     // === CONTRACT ===
@@ -399,6 +401,8 @@ mod az_trading_competition {
                 azero_processing_fee: azero_processing_fee
                     .unwrap_or(self.default_azero_processing_fee),
                 judge: self.admin,
+                // has to start at 1 as all competition users start at 0
+                judge_place_attempt: 1,
                 next_judge: None,
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
@@ -753,7 +757,82 @@ mod az_trading_competition {
         // }
 
         #[ink(message)]
-        pub fn place_users(&mut self, id: u64, users: Vec<AccountId>) -> Result<()> {}
+        pub fn place_users(&mut self, id: u64, users: Vec<AccountId>) -> Result<()> {
+            // 1. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 2. Validate that the user is the judge
+            if competition.judge != Self::env().caller() {
+                return Err(AzTradingCompetitionError::Unauthorised);
+            }
+            // 3. Validate that the competition has ended
+            self.validate_competition_has_ended(competition.clone())?;
+            // 4. Validate that all competitors have had their final values set
+            if competition.user_count != competition.user_final_value_updated_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have not had their final values updated.".to_string(),
+                ));
+            }
+            // 5. Go through users
+            for user in users.iter() {
+                // 6a. Validate that user is a participant
+                // 6b. Validate that user hasn't been placed yet
+                if let Some(mut competition_user_unwrapped) = self.competition_users.get((id, user))
+                {
+                    if competition_user_unwrapped.judge_place_attempt
+                        == competition.judge_place_attempt
+                    {
+                        return Err(AzTradingCompetitionError::UnprocessableEntity(
+                            "User has already been placed.".to_string(),
+                        ));
+                    }
+
+                    let competitor_final_value: String =
+                        competition_user_unwrapped.final_value.clone().unwrap();
+                    // 7. Place user by checking payout_winning_price_and_user_counts
+                    let array_length = competition.payout_winning_price_and_user_counts.len();
+                    if array_length == 0 {
+                        competition
+                            .payout_winning_price_and_user_counts
+                            .push((competitor_final_value, 1));
+                    } else {
+                        let latest_placed_price = U256::from_dec_str(
+                            &competition.payout_winning_price_and_user_counts[array_length - 1].0,
+                        )
+                        .unwrap();
+                        let user_final_value = U256::from_dec_str(&competitor_final_value).unwrap();
+                        if latest_placed_price == user_final_value {
+                            // Add to the count
+                            competition.payout_winning_price_and_user_counts[array_length - 1].1 +=
+                                1
+                        } else if user_final_value > latest_placed_price {
+                            competition
+                                .payout_winning_price_and_user_counts
+                                .push((competitor_final_value, 1));
+                        } else {
+                            return Err(AzTradingCompetitionError::UnprocessableEntity(
+                                "Competitor is in the wrong place.".to_string(),
+                            ));
+                        }
+                    }
+                    // 8. Update judge place attempt
+                    competition_user_unwrapped.judge_place_attempt =
+                        competition.judge_place_attempt;
+                    self.competition_users
+                        .insert((id, user), &competition_user_unwrapped);
+                    // 9. Increase user placed count
+                    competition.user_placed_count += 1;
+                } else {
+                    return Err(AzTradingCompetitionError::NotFound(
+                        "CompetitionUser".to_string(),
+                    ));
+                }
+            }
+
+            // 10. Update competition
+            self.competitions.insert(competition.id, &competition);
+
+            Ok(())
+        }
 
         // This can be called by anyone
         #[ink(message)]
@@ -934,7 +1013,10 @@ mod az_trading_competition {
             // 9. Create CompetitionUser
             self.competition_users.insert(
                 (competition.id, caller),
-                &CompetitionUser { final_value: None },
+                &CompetitionUser {
+                    final_value: None,
+                    judge_place_attempt: 0,
+                },
             );
 
             // emit event
@@ -1842,6 +1924,7 @@ mod az_trading_competition {
             // == when CompetitionUser exists
             let mut competition_user: CompetitionUser = CompetitionUser {
                 final_value: Some(0.to_string()),
+                judge_place_attempt: 0,
             };
             az_trading_competition
                 .competition_users
@@ -2077,6 +2160,7 @@ mod az_trading_competition {
                 (competition.id, accounts.charlie),
                 &CompetitionUser {
                     final_value: Some("1".to_string()),
+                    judge_place_attempt: 0,
                 },
             );
             // ==== * it replaces the current next_judge with the caller
@@ -2122,6 +2206,213 @@ mod az_trading_competition {
                     .unwrap()
                     .deadline,
                 current_judge_deadline + 1 + DAY_IN_MS
+            );
+        }
+
+        #[ink::test]
+        fn test_place_users() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.place_users(0, vec![]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            let mut competition: Competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // = when caller is not the competition's judge
+            set_caller::<DefaultEnvironment>(accounts.charlie);
+            // = * it raises an error
+            let result = az_trading_competition.place_users(0, vec![]);
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+            // = when caller is the competition's judge
+            set_caller::<DefaultEnvironment>(accounts.bob);
+            // == when competition hasn't ended
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(competition.end);
+            // == * it raises an error
+            let result = az_trading_competition.place_users(0, vec![]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't ended.".to_string(),
+                ))
+            );
+            // == when competition has ended
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                competition.end + 1,
+            );
+            // === when all competitors have not had their final values set
+            competition.user_count = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // === * it raises an error
+            let result = az_trading_competition.place_users(0, vec![]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All users have not had their final values updated.".to_string(),
+                ))
+            );
+            // === when all competitors have had their final values set
+            competition.user_final_value_updated_count = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // ==== when any of the users are not part of the competition
+            let result = az_trading_competition.place_users(0, vec![accounts.django]);
+            // ==== * it raises an error
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionUser".to_string(),
+                ))
+            );
+            // ==== when all users are part of the competition
+            // ===== when any of the users have been placed in this placement round already
+            let django_final_value: Option<String> = Some("5".to_string());
+            az_trading_competition.competition_users.insert(
+                (competition.id, accounts.django),
+                &CompetitionUser {
+                    final_value: django_final_value.clone(),
+                    judge_place_attempt: 1,
+                },
+            );
+            // ===== * it raises an error
+            let result = az_trading_competition.place_users(0, vec![accounts.django]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "User has already been placed.".to_string(),
+                ))
+            );
+            // ===== when all of the users haven't been placed in this placement round
+            az_trading_competition
+                .competition_users
+                .remove((competition.id, accounts.django));
+            az_trading_competition.competition_users.insert(
+                (competition.id, accounts.django),
+                &CompetitionUser {
+                    final_value: django_final_value.clone(),
+                    judge_place_attempt: 0,
+                },
+            );
+            // ====== when no competitors have been placed yet
+            az_trading_competition
+                .place_users(competition.id, vec![accounts.django])
+                .unwrap();
+            // ====== * it places the user in the first slot
+            competition = az_trading_competition
+                .competitions
+                .get(competition.id)
+                .unwrap();
+            assert_eq!(
+                competition.payout_winning_price_and_user_counts[0].0,
+                django_final_value.clone().unwrap(),
+            );
+            assert_eq!(competition.payout_winning_price_and_user_counts[0].1, 1);
+            // ====== when some competitors have been placed so far
+            // ======= when competitor has the same final value as the last placed competitor
+            // ======= * it adds to the latest place's count
+            az_trading_competition.competition_users.insert(
+                (competition.id, accounts.charlie),
+                &CompetitionUser {
+                    final_value: django_final_value.clone(),
+                    judge_place_attempt: 0,
+                },
+            );
+            az_trading_competition
+                .place_users(competition.id, vec![accounts.charlie])
+                .unwrap();
+            competition = az_trading_competition
+                .competitions
+                .get(competition.id)
+                .unwrap();
+            assert_eq!(competition.payout_winning_price_and_user_counts.len(), 1);
+            assert_eq!(competition.payout_winning_price_and_user_counts[0].1, 2);
+            // ======= when competitor has a higher final value than the last placed competitor
+            let bob_final_value: String = "6".to_string();
+            az_trading_competition.competition_users.insert(
+                (competition.id, accounts.bob),
+                &CompetitionUser {
+                    final_value: Some(bob_final_value.clone()),
+                    judge_place_attempt: 0,
+                },
+            );
+            az_trading_competition
+                .place_users(competition.id, vec![accounts.bob])
+                .unwrap();
+            // ======= * it places the competitor onto the end
+            competition = az_trading_competition
+                .competitions
+                .get(competition.id)
+                .unwrap();
+            assert_eq!(competition.payout_winning_price_and_user_counts.len(), 2);
+            assert_eq!(
+                competition.payout_winning_price_and_user_counts[1].0,
+                bob_final_value
+            );
+            assert_eq!(competition.payout_winning_price_and_user_counts[1].1, 1);
+            // ======= when competitor has a lower final value than the last placed competitor
+            az_trading_competition.competition_users.insert(
+                (competition.id, accounts.frank),
+                &CompetitionUser {
+                    final_value: Some("0".to_string()),
+                    judge_place_attempt: 0,
+                },
+            );
+            // ======= it raises an error
+            let result = az_trading_competition.place_users(competition.id, vec![accounts.frank]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competitor is in the wrong place.".to_string(),
+                ))
+            );
+            // ===== * it updates competitors' placement rounds
+            assert_eq!(
+                az_trading_competition
+                    .competition_users
+                    .get((competition.id, accounts.django))
+                    .unwrap()
+                    .judge_place_attempt,
+                1
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_users
+                    .get((competition.id, accounts.charlie))
+                    .unwrap()
+                    .judge_place_attempt,
+                1
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_users
+                    .get((competition.id, accounts.bob))
+                    .unwrap()
+                    .judge_place_attempt,
+                1
+            );
+            assert_eq!(
+                az_trading_competition
+                    .competition_users
+                    .get((competition.id, accounts.frank))
+                    .unwrap()
+                    .judge_place_attempt,
+                0
             );
         }
 
