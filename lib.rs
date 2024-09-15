@@ -835,11 +835,7 @@ mod az_trading_competition {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that user's haven't been placed yet
-            if competition.competitors_placed_count == competition.competitors_count {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All users have been placed.".to_string(),
-                ));
-            }
+            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
             // 3. Validate that next judge exists
             if let Some(next_judge_unwrapped) = competition.next_judge {
                 let current_timestamp: Timestamp = Self::env().block_timestamp();
@@ -883,11 +879,7 @@ mod az_trading_competition {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that all users haven't been placed yet
-            if competition.competitors_placed_count == competition.competitors_count {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All users have been placed.".to_string(),
-                ));
-            }
+            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
             // 3. Validate that user hasn't been a competition admin yet
             if self.competition_judges.get((id, caller)).is_some() {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -1035,11 +1027,7 @@ mod az_trading_competition {
                     "Zero competitors have been placed.".to_string(),
                 ));
             }
-            if competition.competitors_placed_count == competition.competitors_count {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All competitors have been placed.".to_string(),
-                ));
-            }
+            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
 
             competition.competitors_placed_count = 0;
             competition.payout_winning_price_and_competitors_counts = vec![];
@@ -1177,6 +1165,19 @@ mod az_trading_competition {
 
         fn emit_event<EE: EmitEvent<Self>>(emitter: EE, event: Event) {
             emitter.emit_event(event);
+        }
+
+        fn validate_all_competitors_have_not_been_placed(
+            &self,
+            competition: Competition,
+        ) -> Result<()> {
+            if competition.competitors_placed_count == competition.competitors_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All competitors have been placed.".to_string(),
+                ));
+            }
+
+            Ok(())
         }
 
         fn validate_competition_has_ended(&self, competition: Competition) -> Result<()> {
@@ -2065,7 +2066,7 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All users have been placed.".to_string(),
+                    "All competitors have been placed.".to_string(),
                 ))
             );
             // = when all of the competition's users hasn't been placed
@@ -2142,7 +2143,7 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All users have been placed.".to_string(),
+                    "All competitors have been placed.".to_string(),
                 ))
             );
             // = when all of the competition's users hasn't been placed
