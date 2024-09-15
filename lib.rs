@@ -143,7 +143,7 @@ mod az_trading_competition {
         pub payout_winning_price_and_competitors_counts: Vec<(String, u32)>,
         pub token_prices_vec: Vec<(Timestamp, Balance)>,
         pub competitors_count: u32,
-        pub user_final_value_updated_count: u32,
+        pub competitor_final_value_updated_count: u32,
         pub competitors_placed_count: u32,
         pub creator: AccountId,
     }
@@ -410,7 +410,7 @@ mod az_trading_competition {
                 creator: caller,
                 token_prices_vec: vec![],
                 competitors_count: 0,
-                user_final_value_updated_count: 0,
+                competitor_final_value_updated_count: 0,
                 competitors_placed_count: 0,
             };
             self.competitions
@@ -650,8 +650,8 @@ mod az_trading_competition {
             let user_value_as_string: String = user_value.to_string();
             competitor.final_value = Some(user_value_as_string.clone());
             self.competitors.insert((id, user), &competitor);
-            // 8. Increase competition.user_final_value_updated_count
-            competition.user_final_value_updated_count += 1;
+            // 8. Increase competition.competitor_final_value_updated_count
+            competition.competitor_final_value_updated_count += 1;
             self.competitions.insert(competition.id, &competition);
             // 9. Send processing fee to caller
             let processing_fee: Balance = (U256::from(competition.azero_processing_fee)
@@ -762,9 +762,9 @@ mod az_trading_competition {
             // 3. Validate that the competition has ended
             self.validate_competition_has_ended(competition.clone())?;
             // 4. Validate that all competitors have had their final values set
-            if competition.competitors_count != competition.user_final_value_updated_count {
+            if competition.competitors_count != competition.competitor_final_value_updated_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All users have not had their final values updated.".to_string(),
+                    "All competitors have not had their final values updated.".to_string(),
                 ));
             }
             // 5. Go through users
@@ -795,16 +795,17 @@ mod az_trading_competition {
                                 .0,
                         )
                         .unwrap();
-                        let user_final_value = U256::from_dec_str(&competitor_final_value).unwrap();
-                        if latest_placed_price == user_final_value {
+                        let competitor_final_value =
+                            U256::from_dec_str(&competitor_final_value).unwrap();
+                        if latest_placed_price == competitor_final_value {
                             // Add to the count
                             competition.payout_winning_price_and_competitors_counts
                                 [array_length - 1]
                                 .1 += 1
-                        } else if user_final_value > latest_placed_price {
+                        } else if competitor_final_value > latest_placed_price {
                             competition
                                 .payout_winning_price_and_competitors_counts
-                                .push((competitor_final_value, 1));
+                                .push((competitor_final_value.to_string(), 1));
                         } else {
                             return Err(AzTradingCompetitionError::UnprocessableEntity(
                                 "Competitor is in the wrong place.".to_string(),
@@ -2019,12 +2020,12 @@ mod az_trading_competition {
                 .final_value
                 .unwrap();
             assert_eq!(final_value, usd_usd_value.to_string());
-            // ==== * it increases the competition.user_final_value_updated_count by one
+            // ==== * it increases the competition.competitor_final_value_updated_count by one
             competition = az_trading_competition
                 .competitions
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(competition.user_final_value_updated_count, 1);
+            assert_eq!(competition.competitor_final_value_updated_count, 1);
             // ==== * it sends the caller 10% of the azero_processing_fee
             assert!(get_balance(accounts.bob) > caller_balance);
             assert!(
@@ -2283,11 +2284,11 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "All users have not had their final values updated.".to_string(),
+                    "All competitors have not had their final values updated.".to_string(),
                 ))
             );
             // === when all competitors have had their final values set
-            competition.user_final_value_updated_count = 1;
+            competition.competitor_final_value_updated_count = 1;
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
