@@ -752,7 +752,11 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn place_competitors(&mut self, id: u64, competitors: Vec<AccountId>) -> Result<()> {
+        pub fn place_competitors(
+            &mut self,
+            id: u64,
+            competitors_addresses: Vec<AccountId>,
+        ) -> Result<()> {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that the caller is the judge
@@ -768,10 +772,12 @@ mod az_trading_competition {
                 ));
             }
             // 5. Go through competitors
-            for competitor in competitors.iter() {
+            for competitor_address in competitors_addresses.iter() {
                 // 6a. Validate that competitor is a participant
                 // 6b. Validate that competitor hasn't been placed yet
-                if let Some(mut competitor_unwrapped) = self.competitors.get((id, competitor)) {
+                if let Some(mut competitor_unwrapped) =
+                    self.competitors.get((id, competitor_address))
+                {
                     if competitor_unwrapped.judge_place_attempt == competition.judge_place_attempt {
                         return Err(AzTradingCompetitionError::UnprocessableEntity(
                             "Competitor has already been placed.".to_string(),
@@ -815,7 +821,7 @@ mod az_trading_competition {
                     // 8. Update judge place attempt
                     competitor_unwrapped.judge_place_attempt = competition.judge_place_attempt;
                     self.competitors
-                        .insert((id, competitor), &competitor_unwrapped);
+                        .insert((id, competitor_address), &competitor_unwrapped);
                     // 9. Increase competitor placed count
                     competition.competitors_placed_count += 1;
                 } else {
