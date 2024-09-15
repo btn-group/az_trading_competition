@@ -54,14 +54,15 @@ AZERO/ETH: 5HaM6dHg3ymuQ6NSCquMkzBLLHv9t1H4YvBDMarox37PbusE
 - In case there's a problem with the oracle, will need a manual option that can be set after a certain amount of time.
 - Will need to have a think about the price of the token in terms of charting and front end.
 
-### Note about minting an NFT on registration
+### Note about providing NFTs
+
+The NFT is a bonus and separate to this contract.
 
 Was thinking the easiest way to go about it would be to:
-1. create a collection on artzero
-2. Whitelist the trading competition smart contract
-3. Have the whitelist phase up until registration for trading competition ends
-4. Setup the trading competition smart contract to mint a nft everytime someone registers and then send it to the user.
-5. Rest of the collection will be made public after that.
+1. create a collection on artzero.
+2. Whitelist the competitors.
+3. Allow free mint for competitors after competition starts.
+4. Depending on the number of competitors and NFTs, do a public sale for the rest.
 
 During whitelist phase, the price would be 0, then public whatever you reckon.
 
