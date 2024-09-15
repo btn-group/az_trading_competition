@@ -140,11 +140,11 @@ mod az_trading_competition {
         pub next_judge: Option<AccountId>,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
-        pub payout_winning_price_and_user_counts: Vec<(String, u32)>,
+        pub payout_winning_price_and_competitors_counts: Vec<(String, u32)>,
         pub token_prices_vec: Vec<(Timestamp, Balance)>,
-        pub user_count: u32,
+        pub competitors_count: u32,
         pub user_final_value_updated_count: u32,
-        pub user_placed_count: u32,
+        pub competitors_placed_count: u32,
         pub creator: AccountId,
     }
 
@@ -406,12 +406,12 @@ mod az_trading_competition {
                 next_judge: None,
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
-                payout_winning_price_and_user_counts: vec![],
+                payout_winning_price_and_competitors_counts: vec![],
                 creator: caller,
                 token_prices_vec: vec![],
-                user_count: 0,
+                competitors_count: 0,
                 user_final_value_updated_count: 0,
-                user_placed_count: 0,
+                competitors_placed_count: 0,
             };
             self.competitions
                 .insert(self.competitions_count, &competition);
@@ -452,7 +452,7 @@ mod az_trading_competition {
             let mut competition: Competition = self.competitions_show(id)?;
             Self::authorise(competition.creator, caller)?;
             self.validate_competition_has_not_started(competition.start)?;
-            if competition.user_count > 0 {
+            if competition.competitors_count > 0 {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Unable to change when registrants present.".to_string(),
                 ));
@@ -572,7 +572,7 @@ mod az_trading_competition {
             // 3. Validate that competition has started
             self.validate_competition_has_started(competition.start)?;
             // 4. Validate that user count is greater than or equal to payout_places
-            if competition.user_count < competition.payout_places.into() {
+            if competition.competitors_count < competition.payout_places.into() {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Competition hasn't met minimum user requirements.".to_string(),
                 ));
@@ -584,7 +584,7 @@ mod az_trading_competition {
                 ));
             }
             // 6. Transfer admin fee to admin
-            let admin_fee: Balance = Balance::from(competition.user_count)
+            let admin_fee: Balance = Balance::from(competition.competitors_count)
                 * (U256::from(competition.entry_fee_amount)
                     * U256::from(competition.admin_fee_percentage_numerator)
                     / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
@@ -694,7 +694,7 @@ mod az_trading_competition {
                 self.competition_token_user(id, competition.entry_fee_token, caller)?;
             // 3. Validate able to deregister
             if Self::env().block_timestamp() >= competition.start
-                && competition.user_count >= competition.payout_places.into()
+                && competition.competitors_count >= competition.payout_places.into()
             {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Unable to deregister when competition has started and minimum user requirements met.".to_string(),
@@ -714,7 +714,7 @@ mod az_trading_competition {
             self.competition_token_users
                 .remove((id, competition.entry_fee_token, caller));
             // 6. Update competition
-            competition.user_count -= 1;
+            competition.competitors_count -= 1;
             self.competitions.insert(id, &competition);
             // 7. Transfer funds to buyer
             if self
@@ -762,7 +762,7 @@ mod az_trading_competition {
             // 3. Validate that the competition has ended
             self.validate_competition_has_ended(competition.clone())?;
             // 4. Validate that all competitors have had their final values set
-            if competition.user_count != competition.user_final_value_updated_count {
+            if competition.competitors_count != competition.user_final_value_updated_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "All users have not had their final values updated.".to_string(),
                 ));
@@ -780,25 +780,30 @@ mod az_trading_competition {
 
                     let competitor_final_value: String =
                         competitor_unwrapped.final_value.clone().unwrap();
-                    // 7. Place user by checking payout_winning_price_and_user_counts
-                    let array_length = competition.payout_winning_price_and_user_counts.len();
+                    // 7. Place user by checking payout_winning_price_and_competitors_counts
+                    let array_length = competition
+                        .payout_winning_price_and_competitors_counts
+                        .len();
                     if array_length == 0 {
                         competition
-                            .payout_winning_price_and_user_counts
+                            .payout_winning_price_and_competitors_counts
                             .push((competitor_final_value, 1));
                     } else {
                         let latest_placed_price = U256::from_dec_str(
-                            &competition.payout_winning_price_and_user_counts[array_length - 1].0,
+                            &competition.payout_winning_price_and_competitors_counts
+                                [array_length - 1]
+                                .0,
                         )
                         .unwrap();
                         let user_final_value = U256::from_dec_str(&competitor_final_value).unwrap();
                         if latest_placed_price == user_final_value {
                             // Add to the count
-                            competition.payout_winning_price_and_user_counts[array_length - 1].1 +=
-                                1
+                            competition.payout_winning_price_and_competitors_counts
+                                [array_length - 1]
+                                .1 += 1
                         } else if user_final_value > latest_placed_price {
                             competition
-                                .payout_winning_price_and_user_counts
+                                .payout_winning_price_and_competitors_counts
                                 .push((competitor_final_value, 1));
                         } else {
                             return Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -810,7 +815,7 @@ mod az_trading_competition {
                     competitor_unwrapped.judge_place_attempt = competition.judge_place_attempt;
                     self.competitors.insert((id, user), &competitor_unwrapped);
                     // 9. Increase user placed count
-                    competition.user_placed_count += 1;
+                    competition.competitors_placed_count += 1;
                 } else {
                     return Err(AzTradingCompetitionError::NotFound(
                         "Competitor".to_string(),
@@ -830,7 +835,7 @@ mod az_trading_competition {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that user's haven't been placed yet
-            if competition.user_placed_count == competition.user_count {
+            if competition.competitors_placed_count == competition.competitors_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "All users have been placed.".to_string(),
                 ));
@@ -878,7 +883,7 @@ mod az_trading_competition {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that all users haven't been placed yet
-            if competition.user_placed_count == competition.user_count {
+            if competition.competitors_placed_count == competition.competitors_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "All users have been placed.".to_string(),
                 ));
@@ -995,8 +1000,8 @@ mod az_trading_competition {
                 (id, competition.entry_fee_token, caller),
                 &(competition.entry_fee_amount - admin_fee),
             );
-            // 8. Increase competition.user_count
-            competition.user_count += 1;
+            // 8. Increase competition.competitors_count
+            competition.competitors_count += 1;
             self.competitions.insert(competition.id, &competition);
             // 9. Create Competitor
             self.competitors.insert(
@@ -1016,7 +1021,33 @@ mod az_trading_competition {
         // This needs to be called when:
         // 1. The judge wants to reset
         #[ink(message)]
-        pub fn reset(&mut self, id: u64, users: Vec<AccountId>) -> Result<()> {}
+        pub fn reset(&mut self, id: u64) -> Result<()> {
+            let mut competition: Competition = self.competitions_show(id)?;
+            let caller: AccountId = Self::env().caller();
+            Self::authorise(competition.judge, caller)?;
+            if competition.judge_place_attempt == u128::MAX {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Maximum place attempts reached.".to_string(),
+                ));
+            }
+            if competition.competitors_placed_count == 0 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Zero competitors have been placed.".to_string(),
+                ));
+            }
+            if competition.competitors_placed_count == competition.competitors_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All competitors have been placed.".to_string(),
+                ));
+            }
+
+            competition.competitors_placed_count = 0;
+            competition.payout_winning_price_and_competitors_counts = vec![];
+            competition.judge_place_attempt += 1;
+            self.competitions.insert(competition.id, &competition);
+
+            Ok(())
+        }
 
         #[ink(message)]
         pub fn swap_exact_tokens_for_tokens(
@@ -1037,7 +1068,7 @@ mod az_trading_competition {
             let in_token = path[0];
             let out_token = path[path.len() - 1];
             // 1. Validate that there's enough users in competition
-            if competition.user_count < competition.payout_places.into() {
+            if competition.competitors_count < competition.payout_places.into() {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Competition is invalid, please deregister.".to_string(),
                 ));
@@ -1376,7 +1407,7 @@ mod az_trading_competition {
                 ))
             );
             // === when competition has met minimum user requirements
-            competition.user_count = (competition.payout_places + 1).into();
+            competition.competitors_count = (competition.payout_places + 1).into();
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
@@ -1640,7 +1671,7 @@ mod az_trading_competition {
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
             // === when competition has registrants
             let mut competition: Competition = az_trading_competition.competitions.get(0).unwrap();
-            competition.user_count = 1;
+            competition.competitors_count = 1;
             az_trading_competition.competitions.insert(0, &competition);
             let result = az_trading_competition.competition_payout_structure_numerators_update(
                 0,
@@ -1653,7 +1684,7 @@ mod az_trading_competition {
                 ))
             );
             // === when competition does not have registrants
-            competition.user_count = 0;
+            competition.competitors_count = 0;
             az_trading_competition.competitions.insert(0, &competition);
             // ==== when a payout_structure_numerator is greater than zero and the position before does not have a numerator set
             // ==== * it raises an error
@@ -2026,8 +2057,8 @@ mod az_trading_competition {
                 )
                 .unwrap();
             // = when all of the competition's users have been placed
-            competition.user_count = 5;
-            competition.user_placed_count = 5;
+            competition.competitors_count = 5;
+            competition.competitors_placed_count = 5;
             az_trading_competition.competitions.insert(0, &competition);
             // = * it raises an error
             let result = az_trading_competition.judge_update(0);
@@ -2038,8 +2069,8 @@ mod az_trading_competition {
                 ))
             );
             // = when all of the competition's users hasn't been placed
-            competition.user_count = 5;
-            competition.user_placed_count = 1;
+            competition.competitors_count = 5;
+            competition.competitors_placed_count = 1;
             az_trading_competition.competitions.insert(0, &competition);
             // == when next judge does not exist
             // == * it raises an error
@@ -2103,8 +2134,8 @@ mod az_trading_competition {
                 )
                 .unwrap();
             // = when all of the competition's users have been placed
-            competition.user_count = 5;
-            competition.user_placed_count = 5;
+            competition.competitors_count = 5;
+            competition.competitors_placed_count = 5;
             az_trading_competition.competitions.insert(0, &competition);
             // = * it raises an error
             let result = az_trading_competition.next_judge_update(0);
@@ -2115,8 +2146,8 @@ mod az_trading_competition {
                 ))
             );
             // = when all of the competition's users hasn't been placed
-            competition.user_count = 5;
-            competition.user_placed_count = 1;
+            competition.competitors_count = 5;
+            competition.competitors_placed_count = 1;
             az_trading_competition.competitions.insert(0, &competition);
             // == when caller has been a competition judge before
             // == * it raises an error
@@ -2242,7 +2273,7 @@ mod az_trading_competition {
                 competition.end + 1,
             );
             // === when all competitors have not had their final values set
-            competition.user_count = 1;
+            competition.competitors_count = 1;
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
@@ -2307,10 +2338,13 @@ mod az_trading_competition {
                 .get(competition.id)
                 .unwrap();
             assert_eq!(
-                competition.payout_winning_price_and_user_counts[0].0,
+                competition.payout_winning_price_and_competitors_counts[0].0,
                 django_final_value.clone().unwrap(),
             );
-            assert_eq!(competition.payout_winning_price_and_user_counts[0].1, 1);
+            assert_eq!(
+                competition.payout_winning_price_and_competitors_counts[0].1,
+                1
+            );
             // ====== when some competitors have been placed so far
             // ======= when competitor has the same final value as the last placed competitor
             // ======= * it adds to the latest place's count
@@ -2328,8 +2362,16 @@ mod az_trading_competition {
                 .competitions
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(competition.payout_winning_price_and_user_counts.len(), 1);
-            assert_eq!(competition.payout_winning_price_and_user_counts[0].1, 2);
+            assert_eq!(
+                competition
+                    .payout_winning_price_and_competitors_counts
+                    .len(),
+                1
+            );
+            assert_eq!(
+                competition.payout_winning_price_and_competitors_counts[0].1,
+                2
+            );
             // ======= when competitor has a higher final value than the last placed competitor
             let bob_final_value: String = "6".to_string();
             az_trading_competition.competitors.insert(
@@ -2347,12 +2389,20 @@ mod az_trading_competition {
                 .competitions
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(competition.payout_winning_price_and_user_counts.len(), 2);
             assert_eq!(
-                competition.payout_winning_price_and_user_counts[1].0,
+                competition
+                    .payout_winning_price_and_competitors_counts
+                    .len(),
+                2
+            );
+            assert_eq!(
+                competition.payout_winning_price_and_competitors_counts[1].0,
                 bob_final_value
             );
-            assert_eq!(competition.payout_winning_price_and_user_counts[1].1, 1);
+            assert_eq!(
+                competition.payout_winning_price_and_competitors_counts[1].1,
+                1
+            );
             // ======= when competitor has a lower final value than the last placed competitor
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.frank),
@@ -2484,6 +2534,104 @@ mod az_trading_competition {
         }
 
         #[ink::test]
+        fn test_reset() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.reset(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            let mut competition: Competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // = when caller is not the judge of the competition
+            set_caller::<DefaultEnvironment>(accounts.django);
+            let result = az_trading_competition.reset(competition.id);
+            // = * it raises an error
+            assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
+            // = when caller is the judge of the competition
+            set_caller::<DefaultEnvironment>(competition.judge);
+            // == when judge_place_attempt has reached the maximum
+            competition.judge_place_attempt = u128::MAX;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // == * it raises an error
+            let result = az_trading_competition.reset(competition.id);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Maximum place attempts reached.".to_string(),
+                ))
+            );
+            // == when judge_place_attempt has not reached the maximum.
+            competition.judge_place_attempt -= 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // === when competition hasn't had any competitors placed yet
+            // === * it raises an error
+            let result = az_trading_competition.reset(competition.id);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Zero competitors have been placed.".to_string(),
+                ))
+            );
+            // === when competition has competitors placed
+            competition.competitors_placed_count = 1;
+            // ==== when all competitors have been placed
+            competition.competitors_count = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // ==== * it raises an error
+            let result = az_trading_competition.reset(competition.id);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All competitors have been placed.".to_string(),
+                ))
+            );
+            // ===== when all competitors haven't been placed
+            competition.competitors_count = 2;
+            competition
+                .payout_winning_price_and_competitors_counts
+                .push(("123".to_string(), 1));
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            az_trading_competition.reset(competition.id).unwrap();
+            competition = az_trading_competition
+                .competitions
+                .get(competition.id)
+                .unwrap();
+            // ===== * it sets the competitors_placed_count to zero
+            assert_eq!(competition.competitors_placed_count, 0);
+            // ===== * it resets payout_winning_price_and_competitors_counts
+            assert_eq!(
+                competition
+                    .payout_winning_price_and_competitors_counts
+                    .len(),
+                0
+            );
+            // ===== * it increases the judge_place_attempt by one
+            assert_eq!(competition.judge_place_attempt, u128::MAX);
+        }
+
+        #[ink::test]
         fn test_swap_exact_tokens_for_tokens() {
             let (accounts, mut az_trading_competition) = init();
             let id: u64 = 0;
@@ -2556,7 +2704,7 @@ mod az_trading_competition {
                 ))
             );
             // == when competitor count is greater than or equal to payout places
-            competition.user_count = competition.payout_places.into();
+            competition.competitors_count = competition.payout_places.into();
             az_trading_competition.competitions.insert(0, &competition);
             // === when competition hasn't started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
