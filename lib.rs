@@ -630,7 +630,7 @@ mod az_trading_competition {
             }
 
             // 6. Calculate usd value
-            let mut user_value: U256 = U256::from(0);
+            let mut competitor_value: U256 = U256::from(0);
             for dia_price_symbol in VALID_DIA_PRICE_SYMBOLS.iter() {
                 let token: AccountId = self
                     .dia_price_symbol_tokens_mapping
@@ -644,11 +644,11 @@ mod az_trading_competition {
                     .competition_token_users
                     .get((id, token, user))
                     .unwrap_or(0);
-                user_value += U256::from(price) * U256::from(token_balance)
+                competitor_value += U256::from(price) * U256::from(token_balance)
             }
             // 7. Set final_value
-            let user_value_as_string: String = user_value.to_string();
-            competitor.final_value = Some(user_value_as_string.clone());
+            let competitor_value_as_string: String = competitor_value.to_string();
+            competitor.final_value = Some(competitor_value_as_string.clone());
             self.competitors.insert((id, user), &competitor);
             // 8. Increase competition.competitor_final_value_updated_count
             competition.competitor_final_value_updated_count += 1;
@@ -677,11 +677,11 @@ mod az_trading_competition {
                 Event::CompetitorFinalValueUpdate(CompetitorFinalValueUpdate {
                     id: competition.id,
                     user,
-                    value: user_value_as_string.clone(),
+                    value: competitor_value_as_string.clone(),
                 }),
             );
 
-            Ok(user_value_as_string)
+            Ok(competitor_value_as_string)
         }
 
         #[ink(message)]
