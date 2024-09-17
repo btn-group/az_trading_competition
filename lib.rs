@@ -177,7 +177,7 @@ mod az_trading_competition {
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
         competition_token_prizes: Mapping<(u64, AccountId), Balance>,
-        competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
+        competition_token_competitors: Mapping<(u64, AccountId, AccountId), Balance>,
         competitors: Mapping<(u64, AccountId), Competitor>,
         competitions: Mapping<u64, Competition>,
         competitions_count: u64,
@@ -205,7 +205,7 @@ mod az_trading_competition {
                 competition_payout_structure_numerators: Mapping::default(),
                 competition_token_prices: Mapping::default(),
                 competition_token_prizes: Mapping::default(),
-                competition_token_users: Mapping::default(),
+                competition_token_competitors: Mapping::default(),
                 competitors: Mapping::default(),
                 competitions: Mapping::default(),
                 competitions_count: 0,
@@ -282,15 +282,17 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn competition_token_user(
+        pub fn competition_token_competitors_show(
             &self,
             id: u64,
             token: AccountId,
-            user: AccountId,
+            competitor_address: AccountId,
         ) -> Result<Balance> {
-            self.competition_token_users.get((id, token, user)).ok_or(
-                AzTradingCompetitionError::NotFound("CompetitionTokenUser".to_string()),
-            )
+            self.competition_token_competitors
+                .get((id, token, competitor_address))
+                .ok_or(AzTradingCompetitionError::NotFound(
+                    "CompetitionTokenCompetitor".to_string(),
+                ))
         }
 
         #[ink(message)]
@@ -643,7 +645,7 @@ mod az_trading_competition {
                     .get((competition.id, token))
                     .unwrap();
                 let token_balance: Balance = self
-                    .competition_token_users
+                    .competition_token_competitors
                     .get((id, token, user))
                     .unwrap_or(0);
                 if token_balance > 0 {
@@ -696,14 +698,17 @@ mod az_trading_competition {
             Ok(competitor_value_as_string)
         }
 
+        // #[ink(message)]
+        // pub fn competition_prize_pools_show(&mut self, id: u64) -> Result<()> {}
+
         #[ink(message)]
         pub fn deregister(&mut self, id: u64) -> Result<()> {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that user is registered
             let caller: AccountId = Self::env().caller();
-            let competition_token_user: Balance =
-                self.competition_token_user(id, competition.entry_fee_token, caller)?;
+            let competition_token_competitor: Balance =
+                self.competition_token_competitors_show(id, competition.entry_fee_token, caller)?;
             // 3. Validate able to deregister
             if Self::env().block_timestamp() >= competition.start
                 && competition.competitors_count >= competition.payout_places.into()
@@ -717,13 +722,13 @@ mod az_trading_competition {
             PSP22Ref::transfer_builder(
                 &competition.entry_fee_token,
                 caller,
-                competition_token_user,
+                competition_token_competitor,
                 vec![],
             )
             .call_flags(CallFlags::default())
             .invoke()?;
             // 5. Remove competition token user
-            self.competition_token_users
+            self.competition_token_competitors
                 .remove((id, competition.entry_fee_token, caller));
             // 6. Update competition
             competition.competitors_count -= 1;
@@ -981,7 +986,7 @@ mod az_trading_competition {
             // 3. Validate that user hasn't registered already
             let caller: AccountId = Self::env().caller();
             if self
-                .competition_token_users
+                .competition_token_competitors
                 .get((id, competition.entry_fee_token, caller))
                 .is_some()
             {
@@ -1008,7 +1013,7 @@ mod az_trading_competition {
                 / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
             .as_u128();
             // 7. Set balance of competition token user
-            self.competition_token_users.insert(
+            self.competition_token_competitors.insert(
                 (id, competition.entry_fee_token, caller),
                 &(competition.entry_fee_amount - admin_fee),
             );
@@ -1086,7 +1091,7 @@ mod az_trading_competition {
             // 3. Validate that user has enough to cover amount_in
             let caller: AccountId = Self::env().caller();
             let in_balance: Balance =
-                self.competition_token_user(id, competition.entry_fee_token, caller)?;
+                self.competition_token_competitors_show(id, competition.entry_fee_token, caller)?;
             if amount_in > in_balance {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Insufficient balance.".to_string(),
@@ -1138,16 +1143,16 @@ mod az_trading_competition {
             let out_amount: u128 = result_of_swaps[result_of_swaps.len() - 1];
             // 7. Adjust user balances
             // Decrease amount_in for competition token user
-            self.competition_token_users
+            self.competition_token_competitors
                 .insert((id, in_token, caller), &(in_balance - amount_in));
             // Increase received amount for competition token user
-            let out_competition_token_user_balance: Balance = self
-                .competition_token_users
+            let out_competition_token_competitor_balance: Balance = self
+                .competition_token_competitors
                 .get((id, out_token, caller))
                 .unwrap_or(0);
-            self.competition_token_users.insert(
+            self.competition_token_competitors.insert(
                 (id, out_token, caller),
-                &(out_competition_token_user_balance + out_amount),
+                &(out_competition_token_competitor_balance + out_amount),
             );
 
             // emit event
@@ -1891,11 +1896,11 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::NotFound(
-                    "CompetitionTokenUser".to_string(),
+                    "CompetitionTokenCompetitor".to_string(),
                 ))
             );
             // = when user is registered
-            az_trading_competition.competition_token_users.insert(
+            az_trading_competition.competition_token_competitors.insert(
                 (0, mock_entry_fee_token(), accounts.bob),
                 &MOCK_ENTRY_FEE_AMOUNT,
             );
@@ -2014,7 +2019,7 @@ mod az_trading_competition {
                     (competition.id, mock_token_to_dia_price_symbol_combo.0),
                     &competition.token_prices_vec[index].1,
                 );
-                az_trading_competition.competition_token_users.insert(
+                az_trading_competition.competition_token_competitors.insert(
                     (
                         competition.id,
                         mock_token_to_dia_price_symbol_combo.0,
@@ -2538,7 +2543,7 @@ mod az_trading_competition {
             // == when competition has not started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START - 1);
             // === when user has registered already
-            az_trading_competition.competition_token_users.insert(
+            az_trading_competition.competition_token_competitors.insert(
                 (0, mock_entry_fee_token(), accounts.bob),
                 &MOCK_ENTRY_FEE_AMOUNT,
             );
@@ -2551,11 +2556,9 @@ mod az_trading_competition {
                 ))
             );
             // === when user has not registered yet
-            az_trading_competition.competition_token_users.remove((
-                0,
-                mock_entry_fee_token(),
-                accounts.bob,
-            ));
+            az_trading_competition
+                .competition_token_competitors
+                .remove((0, mock_entry_fee_token(), accounts.bob));
             // === when azero_processing fee has not been sent
             // === * it raises an error
             let result = az_trading_competition.register(0);
@@ -2791,16 +2794,16 @@ mod az_trading_competition {
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::NotFound(
-                    "CompetitionTokenUser".to_string(),
+                    "CompetitionTokenCompetitor".to_string(),
                 ))
             );
             // ==== when competition trading user is present
             az_trading_competition
-                .competition_token_users
+                .competition_token_competitors
                 .insert((0, mock_entry_fee_token(), accounts.bob), &0);
             // ===== when amount_in is greater than what is available to user
             amount_in = az_trading_competition
-                .competition_token_users
+                .competition_token_competitors
                 .get((id, path[0], accounts.bob))
                 .unwrap_or(0)
                 + 1;
@@ -2820,7 +2823,7 @@ mod az_trading_competition {
             );
             // ===== when amount_in is available to user
             amount_in = az_trading_competition
-                .competition_token_users
+                .competition_token_competitors
                 .get((id, path[0], accounts.bob))
                 .unwrap_or(0);
             // ====== when any of the tokens in path are invalid
