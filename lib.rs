@@ -176,6 +176,7 @@ mod az_trading_competition {
         competition_judges: Mapping<(u64, AccountId), CompetitionJudge>,
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
+        competition_token_prizes: Mapping<(u64, AccountId), Balance>,
         competition_token_users: Mapping<(u64, AccountId, AccountId), Balance>,
         competitors: Mapping<(u64, AccountId), Competitor>,
         competitions: Mapping<u64, Competition>,
@@ -203,6 +204,7 @@ mod az_trading_competition {
                 competition_judges: Mapping::default(),
                 competition_payout_structure_numerators: Mapping::default(),
                 competition_token_prices: Mapping::default(),
+                competition_token_prizes: Mapping::default(),
                 competition_token_users: Mapping::default(),
                 competitors: Mapping::default(),
                 competitions: Mapping::default(),
@@ -629,7 +631,7 @@ mod az_trading_competition {
                 ));
             }
 
-            // 6. Calculate usd value
+            // 6. Calculate usd value and add token balance to competition prizes
             let mut competitor_value: U256 = U256::from(0);
             for dia_price_symbol in VALID_DIA_PRICE_SYMBOLS.iter() {
                 let token: AccountId = self
@@ -644,7 +646,17 @@ mod az_trading_competition {
                     .competition_token_users
                     .get((id, token, user))
                     .unwrap_or(0);
-                competitor_value += U256::from(price) * U256::from(token_balance)
+                if token_balance > 0 {
+                    competitor_value += U256::from(price) * U256::from(token_balance);
+                    let competition_token_prize = self
+                        .competition_token_prizes
+                        .get((competition.id, token))
+                        .unwrap_or(0);
+                    self.competition_token_prizes.insert(
+                        (competition.id, token),
+                        &(competition_token_prize + token_balance),
+                    );
+                }
             }
             // 7. Set final_value
             let competitor_value_as_string: String = competitor_value.to_string();
@@ -1993,7 +2005,8 @@ mod az_trading_competition {
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
-            let mut usd_usd_value: Balance = 0;
+            let mut competitor_usd_value: Balance = 0;
+            let token_balance: Balance = 1;
             for (index, mock_token_to_dia_price_symbol_combo) in
                 mock_token_to_dia_price_symbol_combos().iter().enumerate()
             {
@@ -2007,9 +2020,9 @@ mod az_trading_competition {
                         mock_token_to_dia_price_symbol_combo.0,
                         accounts.bob,
                     ),
-                    &1,
+                    &token_balance,
                 );
-                usd_usd_value += competition.token_prices_vec[index].1
+                competitor_usd_value += competition.token_prices_vec[index].1
             }
             set_balance(
                 contract_id(),
@@ -2026,7 +2039,19 @@ mod az_trading_competition {
                 .unwrap()
                 .final_value
                 .unwrap();
-            assert_eq!(final_value, usd_usd_value.to_string());
+            assert_eq!(final_value, competitor_usd_value.to_string());
+            // ==== * it adds to the competition_token_prize
+            for (_index, mock_token_to_dia_price_symbol_combo) in
+                mock_token_to_dia_price_symbol_combos().iter().enumerate()
+            {
+                assert_eq!(
+                    az_trading_competition
+                        .competition_token_prizes
+                        .get((competition.id, mock_token_to_dia_price_symbol_combo.0))
+                        .unwrap(),
+                    token_balance
+                );
+            }
             // ==== * it increases the competition.competitor_final_value_updated_count by one
             competition = az_trading_competition
                 .competitions
