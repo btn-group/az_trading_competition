@@ -296,6 +296,13 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn competition_token_prizes_show(&self, id: u64, token: AccountId) -> Result<Balance> {
+            self.competition_token_prizes.get((id, token)).ok_or(
+                AzTradingCompetitionError::NotFound("CompetitionTokenPrize".to_string()),
+            )
+        }
+
+        #[ink(message)]
         pub fn competitors_show(&self, id: u64, user: AccountId) -> Result<Competitor> {
             self.competitors
                 .get((id, user))
@@ -340,6 +347,46 @@ mod az_trading_competition {
         }
 
         // === HANDLES ===
+        #[ink(message)]
+        pub fn collect_competition_admin_fee(&mut self, id: u64) -> Result<Balance> {
+            // 1. Validate caller is admin
+            let caller: AccountId = Self::env().caller();
+            Self::authorise(self.admin, caller)?;
+            // 2. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 3. Validate that competition has started
+            self.validate_competition_has_started(competition.start)?;
+            // 4. Validate that user count is greater than or equal to payout_places
+            if competition.competitors_count < competition.payout_places.into() {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition hasn't met minimum user requirements.".to_string(),
+                ));
+            }
+            // 5. Validate that admin fee hasn't been collected yet
+            if competition.admin_fee_collected {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Admin fee has already been colleted.".to_string(),
+                ));
+            }
+            // 6. Transfer admin fee to admin
+            let admin_fee: Balance = Balance::from(competition.competitors_count)
+                * (U256::from(competition.entry_fee_amount)
+                    * U256::from(competition.admin_fee_percentage_numerator)
+                    / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
+                .as_u128();
+            PSP22Ref::transfer_builder(&competition.entry_fee_token, caller, admin_fee, vec![])
+                .call_flags(CallFlags::default())
+                .invoke()?;
+            // 7. Update competition.admin_fee_collected
+            competition.admin_fee_collected = true;
+            self.competitions.insert(id, &competition);
+
+            // emit event
+            Self::emit_event(self.env(), Event::CollectAdminFee(CollectAdminFee { id }));
+
+            Ok(admin_fee)
+        }
+
         #[ink(message)]
         pub fn competitions_create(
             &mut self,
@@ -564,46 +611,6 @@ mod az_trading_competition {
             self.competitions.insert(id, &competition);
 
             Ok(())
-        }
-
-        #[ink(message)]
-        pub fn collect_competition_admin_fee(&mut self, id: u64) -> Result<Balance> {
-            // 1. Validate caller is admin
-            let caller: AccountId = Self::env().caller();
-            Self::authorise(self.admin, caller)?;
-            // 2. Get competition
-            let mut competition: Competition = self.competitions_show(id)?;
-            // 3. Validate that competition has started
-            self.validate_competition_has_started(competition.start)?;
-            // 4. Validate that user count is greater than or equal to payout_places
-            if competition.competitors_count < competition.payout_places.into() {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Competition hasn't met minimum user requirements.".to_string(),
-                ));
-            }
-            // 5. Validate that admin fee hasn't been collected yet
-            if competition.admin_fee_collected {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Admin fee has already been colleted.".to_string(),
-                ));
-            }
-            // 6. Transfer admin fee to admin
-            let admin_fee: Balance = Balance::from(competition.competitors_count)
-                * (U256::from(competition.entry_fee_amount)
-                    * U256::from(competition.admin_fee_percentage_numerator)
-                    / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
-                .as_u128();
-            PSP22Ref::transfer_builder(&competition.entry_fee_token, caller, admin_fee, vec![])
-                .call_flags(CallFlags::default())
-                .invoke()?;
-            // 7. Update competition.admin_fee_collected
-            competition.admin_fee_collected = true;
-            self.competitions.insert(id, &competition);
-
-            // emit event
-            Self::emit_event(self.env(), Event::CollectAdminFee(CollectAdminFee { id }));
-
-            Ok(admin_fee)
         }
 
         // This isn't the final USD value as it doesn't factor in each token's decimal points.
