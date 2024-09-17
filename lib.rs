@@ -428,6 +428,76 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn collect_prize(&mut self, id: u64, token: AccountId) -> Result<Balance> {
+            // 1. Get competition
+            let competition: Competition = self.competitions_show(id)?;
+            // 2. Validate that all competitors have been placed
+            if competition.competitors_count != competition.competitors_placed_count {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All competitors haven't been placed yet.".to_string(),
+                ));
+            }
+            // 3. Get CompetitionTokenCompetitor
+            let caller: AccountId = Self::env().caller();
+            let mut competition_token_competitor: CompetitionTokenCompetitor =
+                self.competition_token_competitors_show(id, token, caller)?;
+            // 4. Validate prize hasn't been collected yet
+            if competition_token_competitor.collected {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Prize has already been collected.".to_string(),
+                ));
+            }
+            // 5. Get competition token prize
+            let mut competition_token_prize: CompetitionTokenPrize =
+                self.competition_token_prizes_show(id, token)?;
+            // 6. Get competitor
+            let competitor: Competitor = self.competitors_show(competition.id, caller)?;
+            // 7. Get PlaceDetail for user
+            let competition_place_details_ordered_by_competitor_final_value = self
+                .competition_place_details_ordered_by_competitor_final_value
+                .get(id)
+                .unwrap();
+            let place_details_index_as_usize: usize =
+                usize::try_from(competitor.place_details_index).unwrap();
+            let place_detail: &PlaceDetail =
+                &competition_place_details_ordered_by_competitor_final_value
+                    [place_details_index_as_usize];
+            // 8. Calculate prize available
+            let prize_available: Balance =
+                competition_token_prize.amount - competition_token_prize.collected;
+            // 9. Calculate amount of token to send to user
+            let mut amount_to_send_to_user: Balance = (U256::from(place_detail.payout_numerator)
+                * U256::from(prize_available)
+                / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR)
+                / U256::from(place_detail.competitors_count))
+            .as_u128();
+            if amount_to_send_to_user > prize_available {
+                amount_to_send_to_user = prize_available
+            }
+            // 10. validate that amount_to_send_to_user is greater than zero
+            if amount_to_send_to_user == 0 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "No prize to collect.".to_string(),
+                ));
+            }
+
+            // 11. Send token to user
+            PSP22Ref::transfer_builder(&token, caller, amount_to_send_to_user, vec![])
+                .call_flags(CallFlags::default())
+                .invoke()?;
+            // 12. Set collected to true
+            competition_token_competitor.collected = true;
+            self.competition_token_competitors
+                .insert((id, token, caller), &competition_token_competitor);
+            // 13. Update CompetitionTokenPrize
+            competition_token_prize.collected += amount_to_send_to_user;
+            self.competition_token_prizes
+                .insert((id, token), &competition_token_prize);
+
+            Ok(amount_to_send_to_user)
+        }
+
+        #[ink(message)]
         pub fn competitions_create(
             &mut self,
             start: Timestamp,
@@ -1569,6 +1639,191 @@ mod az_trading_competition {
             );
             // ==== when competition admin fee hasn't been collected
             // ==== NEED TO DO IN INTEGRATION TEST
+        }
+
+        #[ink::test]
+        fn test_collect_prize() {
+            let (accounts, mut az_trading_competition) = init();
+            // = when competition does not exist
+            // = * it raises an error
+            let result = az_trading_competition
+                .collect_prize(0, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // = when competition exists
+            let mut competition: Competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // == when all competitors haven't been placed yet
+            competition.competitors_count = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // == * it raises an error
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "All competitors haven't been placed yet.".to_string(),
+                ))
+            );
+            // == when all competitors have been placed
+            competition.competitors_placed_count = competition.competitors_count;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // === when competition token competitor is not present
+            // === * it raises an error
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionTokenCompetitor".to_string(),
+                ))
+            );
+            // === when competition token competitor is present
+            // ==== when prize has been collected already
+            let mut competition_token_competitor: CompetitionTokenCompetitor =
+                CompetitionTokenCompetitor {
+                    amount: 0,
+                    collected: true,
+                };
+            az_trading_competition.competition_token_competitors.insert(
+                (
+                    competition.id,
+                    mock_token_to_dia_price_symbol_combos()[0].0,
+                    accounts.bob,
+                ),
+                &competition_token_competitor,
+            );
+            // ==== * it raises an error
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Prize has already been collected.".to_string(),
+                ))
+            );
+            // ==== when prize has not been collected yet
+            competition_token_competitor.collected = false;
+            az_trading_competition.competition_token_competitors.insert(
+                (
+                    competition.id,
+                    mock_token_to_dia_price_symbol_combos()[0].0,
+                    accounts.bob,
+                ),
+                &competition_token_competitor,
+            );
+            // ===== when competition token prize doesn't exist
+            // ===== * it raises an error
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionTokenPrize".to_string(),
+                ))
+            );
+            // ==== when competition token prize exists
+            let mut competition_token_prize: CompetitionTokenPrize = CompetitionTokenPrize {
+                amount: 5,
+                collected: 0,
+            };
+            az_trading_competition.competition_token_prizes.insert(
+                (competition.id, mock_token_to_dia_price_symbol_combos()[0].0),
+                &competition_token_prize,
+            );
+            // ===== when competitor's place detail numerator is zero
+            az_trading_competition.competitors.insert(
+                (competition.id, accounts.bob),
+                &Competitor {
+                    final_value: Some("1".to_string()),
+                    judge_place_attempt: 1,
+                    place_details_index: 0,
+                },
+            );
+            let mut competition_place_details_ordered_by_competitor_final_value =
+                az_trading_competition
+                    .competition_place_details_ordered_by_competitor_final_value
+                    .get(competition.id)
+                    .unwrap();
+            let mut place_detail: PlaceDetail = PlaceDetail {
+                competitor_value: "1".to_string(),
+                competitors_count: 1,
+                payout_numerator: 0,
+            };
+            competition_place_details_ordered_by_competitor_final_value.push(place_detail.clone());
+            az_trading_competition
+                .competition_place_details_ordered_by_competitor_final_value
+                .insert(
+                    competition.id,
+                    &competition_place_details_ordered_by_competitor_final_value,
+                );
+            // ===== * it raises an error
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "No prize to collect.".to_string(),
+                ))
+            );
+            // ===== when place detail numerator is positive
+            place_detail.payout_numerator = 1;
+            competition_place_details_ordered_by_competitor_final_value.pop();
+            competition_place_details_ordered_by_competitor_final_value.push(place_detail);
+            az_trading_competition
+                .competition_place_details_ordered_by_competitor_final_value
+                .insert(
+                    competition.id,
+                    &competition_place_details_ordered_by_competitor_final_value,
+                );
+            // ====== when competition token prize has been fully colleted already
+            competition_token_prize.collected = competition_token_prize.amount;
+            az_trading_competition.competition_token_prizes.insert(
+                (competition.id, mock_token_to_dia_price_symbol_combos()[0].0),
+                &competition_token_prize,
+            );
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "No prize to collect.".to_string(),
+                ))
+            );
+            // ====== when competition token prize has not been fully collected already
+            competition_token_prize.collected = 1;
+            az_trading_competition.competition_token_prizes.insert(
+                (competition.id, mock_token_to_dia_price_symbol_combos()[0].0),
+                &competition_token_prize,
+            );
+            // ======= when amount to send to user is zero
+            // ======= * it raises an error
+            let result = az_trading_competition
+                .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "No prize to collect.".to_string(),
+                ))
+            );
+            // ======= when amount to send to user is positive
+            // ======= will have to do in integration tests because of sending tokens
         }
 
         #[ink::test]
