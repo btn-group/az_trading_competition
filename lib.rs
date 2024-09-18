@@ -162,6 +162,16 @@ mod az_trading_competition {
         feature = "std",
         derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
     )]
+    pub struct CompetitionTokenCompetitor {
+        pub amount: Balance,
+        pub collected: bool,
+    }
+
+    #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
     pub struct Competitor {
         pub final_value: Option<String>,
         pub judge_place_attempt: u128,
@@ -177,7 +187,8 @@ mod az_trading_competition {
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
         competition_token_prizes: Mapping<(u64, AccountId), Balance>,
-        competition_token_competitors: Mapping<(u64, AccountId, AccountId), Balance>,
+        competition_token_competitors:
+            Mapping<(u64, AccountId, AccountId), CompetitionTokenCompetitor>,
         competitors: Mapping<(u64, AccountId), Competitor>,
         competitions: Mapping<u64, Competition>,
         competitions_count: u64,
@@ -287,7 +298,7 @@ mod az_trading_competition {
             id: u64,
             token: AccountId,
             competitor_address: AccountId,
-        ) -> Result<Balance> {
+        ) -> Result<CompetitionTokenCompetitor> {
             self.competition_token_competitors
                 .get((id, token, competitor_address))
                 .ok_or(AzTradingCompetitionError::NotFound(
@@ -653,19 +664,20 @@ mod az_trading_competition {
                     .competition_token_prices
                     .get((competition.id, token))
                     .unwrap();
-                let token_balance: Balance = self
+                let competition_token_competitor: CompetitionTokenCompetitor = self
                     .competition_token_competitors
                     .get((id, token, competitor_address))
-                    .unwrap_or(0);
-                if token_balance > 0 {
-                    competitor_value += U256::from(price) * U256::from(token_balance);
+                    .unwrap();
+                if competition_token_competitor.amount > 0 {
+                    competitor_value +=
+                        U256::from(price) * U256::from(competition_token_competitor.amount);
                     let competition_token_prize = self
                         .competition_token_prizes
                         .get((competition.id, token))
                         .unwrap_or(0);
                     self.competition_token_prizes.insert(
                         (competition.id, token),
-                        &(competition_token_prize + token_balance),
+                        &(competition_token_prize + competition_token_competitor.amount),
                     );
                 }
             }
@@ -708,16 +720,13 @@ mod az_trading_competition {
             Ok(competitor_value_as_string)
         }
 
-        // #[ink(message)]
-        // pub fn competition_prize_pools_show(&mut self, id: u64) -> Result<()> {}
-
         #[ink(message)]
         pub fn deregister(&mut self, id: u64) -> Result<()> {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that caller is registered
             let caller: AccountId = Self::env().caller();
-            let competition_token_competitor: Balance =
+            let competition_token_competitor: CompetitionTokenCompetitor =
                 self.competition_token_competitors_show(id, competition.entry_fee_token, caller)?;
             // 3. Validate able to deregister
             if Self::env().block_timestamp() >= competition.start
@@ -732,14 +741,21 @@ mod az_trading_competition {
             PSP22Ref::transfer_builder(
                 &competition.entry_fee_token,
                 caller,
-                competition_token_competitor,
+                competition_token_competitor.amount,
                 vec![],
             )
             .call_flags(CallFlags::default())
             .invoke()?;
-            // 5. Remove competition token competitor
-            self.competition_token_competitors
-                .remove((id, competition.entry_fee_token, caller));
+            // 5. Remove competition token competitors
+            for (index, token_to_dia_price_symbol_combo) in
+                self.token_dia_price_symbols_vec.iter().enumerate()
+            {
+                self.competition_token_competitors.remove((
+                    id,
+                    token_to_dia_price_symbol_combo.0,
+                    caller,
+                ));
+            }
             // 6. Update competition
             competition.competitors_count -= 1;
             self.competitions.insert(id, &competition);
@@ -1025,11 +1041,24 @@ mod az_trading_competition {
                 * U256::from(competition.admin_fee_percentage_numerator)
                 / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
             .as_u128();
-            // 7. Set balance of competition token competitor
-            self.competition_token_competitors.insert(
-                (id, competition.entry_fee_token, caller),
-                &(competition.entry_fee_amount - admin_fee),
-            );
+            // 7. Create all CompetitionTokenCompetitors for competitor
+            for (index, token_to_dia_price_symbol_combo) in
+                self.token_dia_price_symbols_vec.iter().enumerate()
+            {
+                let token_balance: Balance =
+                    if competition.entry_fee_token == token_to_dia_price_symbol_combo.0 {
+                        competition.entry_fee_amount - admin_fee
+                    } else {
+                        0
+                    };
+                self.competition_token_competitors.insert(
+                    (competition.id, token_to_dia_price_symbol_combo.0, caller),
+                    &CompetitionTokenCompetitor {
+                        amount: token_balance,
+                        collected: false,
+                    },
+                );
+            }
             // 8. Increase competition.competitors_count
             competition.competitors_count += 1;
             self.competitions.insert(competition.id, &competition);
@@ -1109,9 +1138,9 @@ mod az_trading_competition {
             self.validate_competition_is_in_progress(competition.clone())?;
             // 3. Validate that competitor has enough to cover amount_in
             let caller: AccountId = Self::env().caller();
-            let in_balance: Balance =
-                self.competition_token_competitors_show(id, competition.entry_fee_token, caller)?;
-            if amount_in > in_balance {
+            let mut in_competition_token_competitor: CompetitionTokenCompetitor =
+                self.competition_token_competitors_show(id, in_token, caller)?;
+            if amount_in > in_competition_token_competitor.amount {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Insufficient balance.".to_string(),
                 ));
@@ -1162,17 +1191,15 @@ mod az_trading_competition {
             let out_amount: u128 = result_of_swaps[result_of_swaps.len() - 1];
             // 7. Adjust competitor balances
             // Decrease amount_in for competition token competitor
+            in_competition_token_competitor.amount -= amount_in;
             self.competition_token_competitors
-                .insert((id, in_token, caller), &(in_balance - amount_in));
+                .insert((id, in_token, caller), &in_competition_token_competitor);
             // Increase received amount for competition token caller
-            let out_competition_token_competitor_balance: Balance = self
-                .competition_token_competitors
-                .get((id, out_token, caller))
-                .unwrap_or(0);
-            self.competition_token_competitors.insert(
-                (id, out_token, caller),
-                &(out_competition_token_competitor_balance + out_amount),
-            );
+            let mut out_competition_token_competitor: CompetitionTokenCompetitor =
+                self.competition_token_competitors_show(id, out_token, caller)?;
+            out_competition_token_competitor.amount += out_amount;
+            self.competition_token_competitors
+                .insert((id, out_token, caller), &out_competition_token_competitor);
 
             // emit event
             Self::emit_event(
@@ -1921,7 +1948,10 @@ mod az_trading_competition {
             // = when caller is registered
             az_trading_competition.competition_token_competitors.insert(
                 (0, mock_entry_fee_token(), accounts.bob),
-                &MOCK_ENTRY_FEE_AMOUNT,
+                &CompetitionTokenCompetitor {
+                    amount: MOCK_ENTRY_FEE_AMOUNT,
+                    collected: false,
+                },
             );
             // == when competition has started
             ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
@@ -2044,7 +2074,10 @@ mod az_trading_competition {
                         mock_token_to_dia_price_symbol_combo.0,
                         accounts.bob,
                     ),
-                    &token_balance,
+                    &CompetitionTokenCompetitor {
+                        amount: token_balance,
+                        collected: false,
+                    },
                 );
                 competitor_usd_value += competition.token_prices_vec[index].1
             }
@@ -2070,8 +2103,10 @@ mod az_trading_competition {
             {
                 assert_eq!(
                     az_trading_competition
-                        .competition_token_prizes
-                        .get((competition.id, mock_token_to_dia_price_symbol_combo.0))
+                        .competition_token_prizes_show(
+                            competition.id,
+                            mock_token_to_dia_price_symbol_combo.0
+                        )
                         .unwrap(),
                     token_balance
                 );
@@ -2564,7 +2599,10 @@ mod az_trading_competition {
             // === when caller has registered already
             az_trading_competition.competition_token_competitors.insert(
                 (0, mock_entry_fee_token(), accounts.bob),
-                &MOCK_ENTRY_FEE_AMOUNT,
+                &CompetitionTokenCompetitor {
+                    amount: MOCK_ENTRY_FEE_AMOUNT,
+                    collected: false,
+                },
             );
             // == * it raises an error
             let result = az_trading_competition.register(0);
@@ -2817,14 +2855,18 @@ mod az_trading_competition {
                 ))
             );
             // ==== when competitor is present
-            az_trading_competition
-                .competition_token_competitors
-                .insert((0, mock_entry_fee_token(), accounts.bob), &0);
+            az_trading_competition.competition_token_competitors.insert(
+                (id, path[0], accounts.bob),
+                &CompetitionTokenCompetitor {
+                    amount: 0,
+                    collected: false,
+                },
+            );
             // ===== when amount_in is greater than what is available to competitor
             amount_in = az_trading_competition
-                .competition_token_competitors
-                .get((id, path[0], accounts.bob))
-                .unwrap_or(0)
+                .competition_token_competitors_show(id, path[0], accounts.bob)
+                .unwrap()
+                .amount
                 + 1;
             // ===== * it raises an error
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
@@ -2842,9 +2884,9 @@ mod az_trading_competition {
             );
             // ===== when amount_in is available to competitor
             amount_in = az_trading_competition
-                .competition_token_competitors
-                .get((id, path[0], accounts.bob))
-                .unwrap_or(0);
+                .competition_token_competitors_show(id, path[0], accounts.bob)
+                .unwrap()
+                .amount;
             // ====== when any of the tokens in path are invalid
             let result = az_trading_competition.swap_exact_tokens_for_tokens(
                 id,
