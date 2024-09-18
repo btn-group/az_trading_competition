@@ -726,8 +726,7 @@ mod az_trading_competition {
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that caller is registered
             let caller: AccountId = Self::env().caller();
-            let competition_token_competitor: CompetitionTokenCompetitor =
-                self.competition_token_competitors_show(id, competition.entry_fee_token, caller)?;
+            self.competition_token_competitors_show(id, competition.entry_fee_token, caller)?;
             // 3. Validate able to deregister
             if Self::env().block_timestamp() >= competition.start
                 && competition.competitors_count >= competition.payout_places.into()
@@ -741,13 +740,13 @@ mod az_trading_competition {
             PSP22Ref::transfer_builder(
                 &competition.entry_fee_token,
                 caller,
-                competition_token_competitor.amount,
+                competition.entry_fee_amount,
                 vec![],
             )
             .call_flags(CallFlags::default())
             .invoke()?;
             // 5. Remove competition token competitors
-            for (index, token_to_dia_price_symbol_combo) in
+            for (_index, token_to_dia_price_symbol_combo) in
                 self.token_dia_price_symbols_vec.iter().enumerate()
             {
                 self.competition_token_competitors.remove((
@@ -1037,12 +1036,9 @@ mod az_trading_competition {
                 competition.entry_fee_amount,
             )?;
             // 6. Figure out admin fee
-            let admin_fee: Balance = (U256::from(competition.entry_fee_amount)
-                * U256::from(competition.admin_fee_percentage_numerator)
-                / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
-            .as_u128();
+            let admin_fee: Balance = self.admin_fee(&competition);
             // 7. Create all CompetitionTokenCompetitors for competitor
-            for (index, token_to_dia_price_symbol_combo) in
+            for (_index, token_to_dia_price_symbol_combo) in
                 self.token_dia_price_symbols_vec.iter().enumerate()
             {
                 let token_balance: Balance =
@@ -1224,6 +1220,13 @@ mod az_trading_competition {
                 .invoke()?;
 
             Ok(())
+        }
+
+        fn admin_fee(&self, competition: &Competition) -> Balance {
+            (U256::from(competition.entry_fee_amount)
+                * U256::from(competition.admin_fee_percentage_numerator)
+                / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
+            .as_u128()
         }
 
         fn authorise(allowed: AccountId, received: AccountId) -> Result<()> {
