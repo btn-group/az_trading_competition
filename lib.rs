@@ -140,7 +140,7 @@ mod az_trading_competition {
         pub next_judge: Option<AccountId>,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
-        pub payout_winning_price_and_competitors_counts: Vec<(String, u32)>,
+        pub place_details_ordered_by_competitor_final_value: Vec<PlaceDetail>,
         pub token_prices_vec: Vec<(Timestamp, Balance)>,
         pub competitors_count: u32,
         pub competitor_final_value_updated_count: u32,
@@ -175,6 +175,17 @@ mod az_trading_competition {
     pub struct Competitor {
         pub final_value: Option<String>,
         pub judge_place_attempt: u128,
+    }
+
+    #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
+    pub struct PlaceDetail {
+        pub competitor_value: String,
+        pub competitors_count: u32,
+        pub payout_numerator: u16,
     }
 
     // === CONTRACT ===
@@ -470,7 +481,7 @@ mod az_trading_competition {
                 next_judge: None,
                 payout_places: 0,
                 payout_structure_numerator_sum: 0,
-                payout_winning_price_and_competitors_counts: vec![],
+                place_details_ordered_by_competitor_final_value: vec![],
                 creator: caller,
                 token_prices_vec: vec![],
                 competitors_count: 0,
@@ -831,32 +842,54 @@ mod az_trading_competition {
 
                     let competitor_final_value: String =
                         competitor_unwrapped.final_value.clone().unwrap();
-                    // 7. Place competitor by checking payout_winning_price_and_competitors_counts
+                    // 7. Place competitor by checking place_details_ordered_by_competitor_final_value
                     let array_length = competition
-                        .payout_winning_price_and_competitors_counts
+                        .place_details_ordered_by_competitor_final_value
                         .len();
+                    let payout_numerator: u16 = if competition.competitors_placed_count + 1
+                        <= competition.payout_places.into()
+                    {
+                        let x: u16 = competition.competitors_placed_count.try_into().unwrap();
+                        self.competition_payout_structure_numerators
+                            .get((competition.id, x))
+                            .unwrap()
+                    } else {
+                        0
+                    };
                     if array_length == 0 {
                         competition
-                            .payout_winning_price_and_competitors_counts
-                            .push((competitor_final_value, 1));
+                            .place_details_ordered_by_competitor_final_value
+                            .push(PlaceDetail {
+                                competitor_value: competitor_final_value,
+                                competitors_count: 1,
+                                payout_numerator,
+                            });
                     } else {
                         let latest_placed_price = U256::from_dec_str(
-                            &competition.payout_winning_price_and_competitors_counts
+                            &competition.place_details_ordered_by_competitor_final_value
                                 [array_length - 1]
-                                .0,
+                                .competitor_value,
                         )
                         .unwrap();
                         let competitor_final_value =
                             U256::from_dec_str(&competitor_final_value).unwrap();
                         if latest_placed_price == competitor_final_value {
                             // Add to the count
-                            competition.payout_winning_price_and_competitors_counts
+                            competition.place_details_ordered_by_competitor_final_value
                                 [array_length - 1]
-                                .1 += 1
+                                .competitors_count += 1;
+                            // Add to the payout_numerator
+                            competition.place_details_ordered_by_competitor_final_value
+                                [array_length - 1]
+                                .payout_numerator += payout_numerator;
                         } else if competitor_final_value > latest_placed_price {
                             competition
-                                .payout_winning_price_and_competitors_counts
-                                .push((competitor_final_value.to_string(), 1));
+                                .place_details_ordered_by_competitor_final_value
+                                .push(PlaceDetail {
+                                    competitor_value: competitor_final_value.to_string(),
+                                    competitors_count: 1,
+                                    payout_numerator,
+                                });
                         } else {
                             return Err(AzTradingCompetitionError::UnprocessableEntity(
                                 "Competitor is in the wrong place.".to_string(),
@@ -1099,7 +1132,7 @@ mod az_trading_competition {
             self.validate_all_competitors_have_not_been_placed(competition.clone())?;
 
             competition.competitors_placed_count = 0;
-            competition.payout_winning_price_and_competitors_counts = vec![];
+            competition.place_details_ordered_by_competitor_final_value = vec![];
             competition.judge_place_attempt += 1;
             self.competitions.insert(competition.id, &competition);
 
@@ -2434,11 +2467,11 @@ mod az_trading_competition {
                 .get(competition.id)
                 .unwrap();
             assert_eq!(
-                competition.payout_winning_price_and_competitors_counts[0].0,
+                competition.place_details_ordered_by_competitor_final_value[0].competitor_value,
                 django_final_value.clone().unwrap(),
             );
             assert_eq!(
-                competition.payout_winning_price_and_competitors_counts[0].1,
+                competition.place_details_ordered_by_competitor_final_value[0].competitors_count,
                 1
             );
             // ====== when some competitors have been placed so far
@@ -2460,12 +2493,12 @@ mod az_trading_competition {
                 .unwrap();
             assert_eq!(
                 competition
-                    .payout_winning_price_and_competitors_counts
+                    .place_details_ordered_by_competitor_final_value
                     .len(),
                 1
             );
             assert_eq!(
-                competition.payout_winning_price_and_competitors_counts[0].1,
+                competition.place_details_ordered_by_competitor_final_value[0].competitors_count,
                 2
             );
             // ======= when competitor has a higher final value than the last placed competitor
@@ -2487,16 +2520,16 @@ mod az_trading_competition {
                 .unwrap();
             assert_eq!(
                 competition
-                    .payout_winning_price_and_competitors_counts
+                    .place_details_ordered_by_competitor_final_value
                     .len(),
                 2
             );
             assert_eq!(
-                competition.payout_winning_price_and_competitors_counts[1].0,
+                competition.place_details_ordered_by_competitor_final_value[1].competitor_value,
                 bob_final_value
             );
             assert_eq!(
-                competition.payout_winning_price_and_competitors_counts[1].1,
+                competition.place_details_ordered_by_competitor_final_value[1].competitors_count,
                 1
             );
             // ======= when competitor has a lower final value than the last placed competitor
@@ -2706,8 +2739,12 @@ mod az_trading_competition {
             // ===== when all competitors haven't been placed
             competition.competitors_count = 2;
             competition
-                .payout_winning_price_and_competitors_counts
-                .push(("123".to_string(), 1));
+                .place_details_ordered_by_competitor_final_value
+                .push(PlaceDetail {
+                    competitor_value: "123".to_string(),
+                    competitors_count: 1,
+                    payout_numerator: 1,
+                });
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
@@ -2718,10 +2755,10 @@ mod az_trading_competition {
                 .unwrap();
             // ===== * it sets the competitors_placed_count to zero
             assert_eq!(competition.competitors_placed_count, 0);
-            // ===== * it resets payout_winning_price_and_competitors_counts
+            // ===== * it resets place_details_ordered_by_competitor_final_value
             assert_eq!(
                 competition
-                    .payout_winning_price_and_competitors_counts
+                    .place_details_ordered_by_competitor_final_value
                     .len(),
                 0
             );
