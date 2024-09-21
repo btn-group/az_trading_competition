@@ -175,6 +175,7 @@ mod az_trading_competition {
     pub struct Competitor {
         pub final_value: Option<String>,
         pub judge_place_attempt: u128,
+        pub place_details_index: u32,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -856,6 +857,7 @@ mod az_trading_competition {
                     } else {
                         0
                     };
+                    let mut place_index: u32 = array_length.try_into().unwrap();
                     if array_length == 0 {
                         competition
                             .place_details_ordered_by_competitor_final_value
@@ -882,6 +884,7 @@ mod az_trading_competition {
                             competition.place_details_ordered_by_competitor_final_value
                                 [array_length - 1]
                                 .payout_numerator += payout_numerator;
+                            place_index = place_index - 1;
                         } else if competitor_final_value > latest_placed_price {
                             competition
                                 .place_details_ordered_by_competitor_final_value
@@ -896,8 +899,9 @@ mod az_trading_competition {
                             ));
                         }
                     }
-                    // 8. Update judge place attempt
+                    // 8. Update judge place attempt and place_detail_index
                     competitor_unwrapped.judge_place_attempt = competition.judge_place_attempt;
+                    competitor_unwrapped.place_details_index = place_index;
                     self.competitors
                         .insert((id, competitor_address), &competitor_unwrapped);
                     // 9. Increase competitor placed count
@@ -1097,6 +1101,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: None,
                     judge_place_attempt: 0,
+                    place_details_index: 0,
                 },
             );
 
@@ -2057,6 +2062,7 @@ mod az_trading_competition {
             let mut competitor: Competitor = Competitor {
                 final_value: Some(0.to_string()),
                 judge_place_attempt: 0,
+                place_details_index: 0,
             };
             az_trading_competition
                 .competitors
@@ -2309,6 +2315,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some("1".to_string()),
                     judge_place_attempt: 0,
+                    place_details_index: 0,
                 },
             );
             // ==== * it replaces the current next_judge with the caller
@@ -2436,6 +2443,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: django_final_value.clone(),
                     judge_place_attempt: 1,
+                    place_details_index: 0,
                 },
             );
             // ===== * it raises an error
@@ -2455,6 +2463,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: django_final_value.clone(),
                     judge_place_attempt: 0,
+                    place_details_index: 0,
                 },
             );
             // ====== when no competitors have been placed yet
@@ -2482,6 +2491,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: django_final_value.clone(),
                     judge_place_attempt: 0,
+                    place_details_index: 0,
                 },
             );
             az_trading_competition
@@ -2508,6 +2518,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some(bob_final_value.clone()),
                     judge_place_attempt: 0,
+                    place_details_index: 0,
                 },
             );
             az_trading_competition
@@ -2538,6 +2549,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some("0".to_string()),
                     judge_place_attempt: 0,
+                    place_details_index: 0,
                 },
             );
             // ======= it raises an error
