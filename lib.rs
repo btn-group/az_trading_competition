@@ -396,7 +396,7 @@ mod az_trading_competition {
             let admin_fee: Balance = Balance::from(competition.competitors_count)
                 * (U256::from(competition.entry_fee_amount)
                     * U256::from(competition.admin_fee_percentage_numerator)
-                    / U256::from(DEFAULT_ADMIN_FEE_PERCENTAGE_NUMERATOR))
+                    / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR))
                 .as_u128();
             PSP22Ref::transfer_builder(&competition.entry_fee_token, caller, admin_fee, vec![])
                 .call_flags(CallFlags::default())
