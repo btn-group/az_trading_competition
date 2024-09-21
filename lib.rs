@@ -2483,6 +2483,15 @@ mod az_trading_competition {
                 competition.place_details_ordered_by_competitor_final_value[0].competitors_count,
                 1
             );
+            // ====== * it sets the competitor's place_details_index
+            assert_eq!(
+                az_trading_competition
+                    .competitors
+                    .get((competition.id, accounts.django))
+                    .unwrap()
+                    .place_details_index,
+                0
+            );
             // ====== when some competitors have been placed so far
             // ======= when competitor has the same final value as the last placed competitor
             // ======= * it adds to the latest place's count
@@ -2510,6 +2519,15 @@ mod az_trading_competition {
             assert_eq!(
                 competition.place_details_ordered_by_competitor_final_value[0].competitors_count,
                 2
+            );
+            // ====== * it sets the competitor's place_details_index
+            assert_eq!(
+                az_trading_competition
+                    .competitors
+                    .get((competition.id, accounts.charlie))
+                    .unwrap()
+                    .place_details_index,
+                0
             );
             // ======= when competitor has a higher final value than the last placed competitor
             let bob_final_value: String = "6".to_string();
@@ -2541,6 +2559,15 @@ mod az_trading_competition {
             );
             assert_eq!(
                 competition.place_details_ordered_by_competitor_final_value[1].competitors_count,
+                1
+            );
+            // ======= * it sets the competitor's place_details_index
+            assert_eq!(
+                az_trading_competition
+                    .competitors
+                    .get((competition.id, accounts.bob))
+                    .unwrap()
+                    .place_details_index,
                 1
             );
             // ======= when competitor has a lower final value than the last placed competitor
