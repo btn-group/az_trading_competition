@@ -941,6 +941,21 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn emergency_rescue(&mut self, id: u64, token: AccountId) -> Result<()> {
+            // 1. Get competition
+            let mut competition: Competition = self.competitions_show(id)?;
+            // 2. Check that competition judge_place_attempt is the max
+            if competition.judge_place_attempt < u128::MAX {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Judge place attempt must be u128 max.".to_string(),
+                ));
+            }
+            // 3. Set balance to zero.
+
+            Ok(())
+        }
+
+        #[ink(message)]
         pub fn increase_allowance_for_router(
             &mut self,
             token: AccountId,
@@ -984,8 +999,8 @@ mod az_trading_competition {
                 self.competition_place_details.get(competition.id).unwrap();
             // 6. Go through competitors
             for competitor_address in competitors_addresses.iter() {
-                // 6a. Validate that competitor_address belongs to a competitor
-                // 6b. Validate that competitor hasn't been placed yet
+                // 7a. Validate that competitor_address belongs to a competitor
+                // 7b. Validate that competitor hasn't been placed yet
                 if let Some(mut competitor_unwrapped) =
                     self.competitors.get((id, competitor_address))
                 {
@@ -1365,12 +1380,15 @@ mod az_trading_competition {
                 ));
             }
 
+            // Update competition judge
             competition_judge.resets += 1;
-            competition.competitors_placed_count = 0;
-            competition.judge_place_attempt += 1;
             self.competition_judges
                 .insert((id, caller), &competition_judge);
+            // Update competition
+            competition.competitors_placed_count = 0;
+            competition.judge_place_attempt += 1;
             self.competitions.insert(competition.id, &competition);
+            // Update competition place details vec
             self.competition_place_details
                 .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
 
