@@ -171,6 +171,16 @@ mod az_trading_competition {
         feature = "std",
         derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
     )]
+    pub struct CompetitionTokenPrize {
+        pub amount: Balance,
+        pub collected: Balance,
+    }
+
+    #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
+    #[cfg_attr(
+        feature = "std",
+        derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
+    )]
     pub struct Competitor {
         pub final_value: Option<String>,
         pub judge_place_attempt: u128,
@@ -198,7 +208,7 @@ mod az_trading_competition {
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
         competition_place_details_ordered_by_competitor_final_value: Mapping<u64, Vec<PlaceDetail>>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
-        competition_token_prizes: Mapping<(u64, AccountId), Balance>,
+        competition_token_prizes: Mapping<(u64, AccountId), CompetitionTokenPrize>,
         competition_token_competitors:
             Mapping<(u64, AccountId, AccountId), CompetitionTokenCompetitor>,
         competitors: Mapping<(u64, AccountId), Competitor>,
@@ -320,7 +330,11 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn competition_token_prizes_show(&self, id: u64, token: AccountId) -> Result<Balance> {
+        pub fn competition_token_prizes_show(
+            &self,
+            id: u64,
+            token: AccountId,
+        ) -> Result<CompetitionTokenPrize> {
             self.competition_token_prizes.get((id, token)).ok_or(
                 AzTradingCompetitionError::NotFound("CompetitionTokenPrize".to_string()),
             )
@@ -686,14 +700,16 @@ mod az_trading_competition {
                 if competition_token_competitor.amount > 0 {
                     competitor_value +=
                         U256::from(price) * U256::from(competition_token_competitor.amount);
-                    let competition_token_prize = self
+                    let mut competition_token_prize: CompetitionTokenPrize = self
                         .competition_token_prizes
                         .get((competition.id, token))
-                        .unwrap_or(0);
-                    self.competition_token_prizes.insert(
-                        (competition.id, token),
-                        &(competition_token_prize + competition_token_competitor.amount),
-                    );
+                        .unwrap_or(CompetitionTokenPrize {
+                            amount: 0,
+                            collected: 0,
+                        });
+                    competition_token_prize.amount += competition_token_competitor.amount;
+                    self.competition_token_prizes
+                        .insert((competition.id, token), &competition_token_prize);
                 }
             }
             // 7. Set final_value
@@ -2163,7 +2179,8 @@ mod az_trading_competition {
                             competition.id,
                             mock_token_to_dia_price_symbol_combo.0
                         )
-                        .unwrap(),
+                        .unwrap()
+                        .amount,
                     token_balance
                 );
             }
