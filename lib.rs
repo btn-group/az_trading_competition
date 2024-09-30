@@ -28,6 +28,17 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct CollectPrize {
+        #[ink(topic)]
+        id: u64,
+        #[ink(topic)]
+        competitor: AccountId,
+        #[ink(topic)]
+        token: AccountId,
+        amount: Balance,
+    }
+
+    #[ink(event)]
     pub struct CompetitionsCreate {
         #[ink(topic)]
         id: u64,
@@ -493,6 +504,17 @@ mod az_trading_competition {
             competition_token_prize.collected += amount_to_send_to_user;
             self.competition_token_prizes
                 .insert((id, token), &competition_token_prize);
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::CollectPrize(CollectPrize {
+                    id,
+                    competitor: caller,
+                    token,
+                    amount: amount_to_send_to_user,
+                }),
+            );
 
             Ok(amount_to_send_to_user)
         }
