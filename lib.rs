@@ -89,6 +89,13 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct PlaceCompetitor {
+        #[ink(topic)]
+        id: u64,
+        competitors_addresses: Vec<AccountId>,
+    }
+
+    #[ink(event)]
     pub struct Register {
         #[ink(topic)]
         id: u64,
@@ -1039,6 +1046,15 @@ mod az_trading_competition {
             // 11. Update competition_place_details
             self.competition_place_details
                 .insert(competition.id, &competition_place_details_vec);
+
+            // emit event
+            Self::emit_event(
+                self.env(),
+                Event::PlaceCompetitor(PlaceCompetitor {
+                    id: competition.id,
+                    competitors_addresses,
+                }),
+            );
 
             Ok(())
         }
