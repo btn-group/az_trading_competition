@@ -328,6 +328,14 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn competition_place_details_show(&self, id: u64, index: usize) -> Result<PlaceDetail> {
+            let competition_place_details_vec: Vec<PlaceDetail> =
+                self.competition_place_details_show.get(id).ok_or(
+                    AzTradingCompetitionError::NotFound("CompetitionPlaceDetail".to_string()),
+                );
+        }
+
+        #[ink(message)]
         pub fn competition_token_competitors_show(
             &self,
             id: u64,
