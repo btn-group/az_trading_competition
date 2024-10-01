@@ -195,7 +195,7 @@ mod az_trading_competition {
     pub struct Competitor {
         pub final_value: Option<String>,
         pub judge_place_attempt: u128,
-        pub place_details_index: u32,
+        pub competition_place_details_index: u32,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -203,7 +203,7 @@ mod az_trading_competition {
         feature = "std",
         derive(scale_info::TypeInfo, ink::storage::traits::StorageLayout)
     )]
-    pub struct PlaceDetail {
+    pub struct CompetitionPlaceDetail {
         pub competitor_value: String,
         pub competitors_count: u32,
         pub payout_numerator: u16,
@@ -217,7 +217,8 @@ mod az_trading_competition {
         admin: AccountId,
         competition_judges: Mapping<(u64, AccountId), CompetitionJudge>,
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
-        competition_place_details_ordered_by_competitor_final_value: Mapping<u64, Vec<PlaceDetail>>,
+        // Ordered- by competitor final value
+        competition_place_details: Mapping<u64, Vec<CompetitionPlaceDetail>>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
         competition_token_prizes: Mapping<(u64, AccountId), CompetitionTokenPrize>,
         competition_token_competitors:
@@ -247,7 +248,7 @@ mod az_trading_competition {
                 allowed_pair_token_combinations_vec: allowed_pair_token_combinations_vec.clone(),
                 competition_judges: Mapping::default(),
                 competition_payout_structure_numerators: Mapping::default(),
-                competition_place_details_ordered_by_competitor_final_value: Mapping::default(),
+                competition_place_details: Mapping::default(),
                 competition_token_prices: Mapping::default(),
                 competition_token_prizes: Mapping::default(),
                 competition_token_competitors: Mapping::default(),
@@ -464,24 +465,22 @@ mod az_trading_competition {
             // 6. Get competitor
             let competitor: Competitor = self.competitors_show(competition.id, caller)?;
             // 7. Get PlaceDetail for user
-            let competition_place_details_ordered_by_competitor_final_value = self
-                .competition_place_details_ordered_by_competitor_final_value
-                .get(id)
-                .unwrap();
-            let place_details_index_as_usize: usize =
-                usize::try_from(competitor.place_details_index).unwrap();
-            let place_detail: &PlaceDetail =
-                &competition_place_details_ordered_by_competitor_final_value
-                    [place_details_index_as_usize];
+            let competition_place_details_vec: Vec<CompetitionPlaceDetail> =
+                self.competition_place_details.get(id).unwrap();
+            let competition_place_details_index_as_usize: usize =
+                usize::try_from(competitor.competition_place_details_index).unwrap();
+            let competition_place_detail: &CompetitionPlaceDetail =
+                &competition_place_details_vec[competition_place_details_index_as_usize];
             // 8. Calculate prize available
             let prize_available: Balance =
                 competition_token_prize.amount - competition_token_prize.collected;
             // 9. Calculate amount of token to send to user
-            let mut amount_to_send_to_user: Balance = (U256::from(place_detail.payout_numerator)
-                * U256::from(prize_available)
-                / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR)
-                / U256::from(place_detail.competitors_count))
-            .as_u128();
+            let mut amount_to_send_to_user: Balance =
+                (U256::from(competition_place_detail.payout_numerator)
+                    * U256::from(prize_available)
+                    / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR)
+                    / U256::from(competition_place_detail.competitors_count))
+                .as_u128();
             if amount_to_send_to_user > prize_available {
                 amount_to_send_to_user = prize_available
             }
@@ -605,8 +604,8 @@ mod az_trading_competition {
                 },
             );
 
-            self.competition_place_details_ordered_by_competitor_final_value
-                .insert::<u64, std::vec::Vec<PlaceDetail>>(competition.id, &vec![]);
+            self.competition_place_details
+                .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
 
             // emit event
             Self::emit_event(
@@ -939,10 +938,8 @@ mod az_trading_competition {
                     "All competitors have not had their final values updated.".to_string(),
                 ));
             }
-            let mut competition_place_details_ordered_by_competitor_final_value: Vec<PlaceDetail> =
-                self.competition_place_details_ordered_by_competitor_final_value
-                    .get(competition.id)
-                    .unwrap();
+            let mut competition_place_details_vec: Vec<CompetitionPlaceDetail> =
+                self.competition_place_details.get(competition.id).unwrap();
             // 5. Go through competitors
             for competitor_address in competitors_addresses.iter() {
                 // 6a. Validate that competitor is a participant
@@ -959,8 +956,7 @@ mod az_trading_competition {
                     let competitor_final_value: String =
                         competitor_unwrapped.final_value.clone().unwrap();
                     // 7. Place competitor by checking place_details_ordered_by_competitor_final_value
-                    let array_length =
-                        competition_place_details_ordered_by_competitor_final_value.len();
+                    let array_length = competition_place_details_vec.len();
                     let payout_numerator: u16 = if competition.competitors_placed_count + 1
                         <= competition.payout_places.into()
                     {
@@ -973,40 +969,31 @@ mod az_trading_competition {
                     };
                     let mut place_index: u32 = array_length.try_into().unwrap();
                     if array_length == 0 {
-                        competition_place_details_ordered_by_competitor_final_value.push(
-                            PlaceDetail {
-                                competitor_value: competitor_final_value,
-                                competitors_count: 1,
-                                payout_numerator,
-                            },
-                        );
+                        competition_place_details_vec.push(CompetitionPlaceDetail {
+                            competitor_value: competitor_final_value,
+                            competitors_count: 1,
+                            payout_numerator,
+                        });
                     } else {
                         let latest_placed_price = U256::from_dec_str(
-                            &competition_place_details_ordered_by_competitor_final_value
-                                [array_length - 1]
-                                .competitor_value,
+                            &competition_place_details_vec[array_length - 1].competitor_value,
                         )
                         .unwrap();
                         let competitor_final_value =
                             U256::from_dec_str(&competitor_final_value).unwrap();
                         if latest_placed_price == competitor_final_value {
                             // Add to the count
-                            competition_place_details_ordered_by_competitor_final_value
-                                [array_length - 1]
-                                .competitors_count += 1;
+                            competition_place_details_vec[array_length - 1].competitors_count += 1;
                             // Add to the payout_numerator
-                            competition_place_details_ordered_by_competitor_final_value
-                                [array_length - 1]
-                                .payout_numerator += payout_numerator;
+                            competition_place_details_vec[array_length - 1].payout_numerator +=
+                                payout_numerator;
                             place_index = place_index - 1;
                         } else if competitor_final_value > latest_placed_price {
-                            competition_place_details_ordered_by_competitor_final_value.push(
-                                PlaceDetail {
-                                    competitor_value: competitor_final_value.to_string(),
-                                    competitors_count: 1,
-                                    payout_numerator,
-                                },
-                            );
+                            competition_place_details_vec.push(CompetitionPlaceDetail {
+                                competitor_value: competitor_final_value.to_string(),
+                                competitors_count: 1,
+                                payout_numerator,
+                            });
                         } else {
                             return Err(AzTradingCompetitionError::UnprocessableEntity(
                                 "Competitor is in the wrong place.".to_string(),
@@ -1015,7 +1002,7 @@ mod az_trading_competition {
                     }
                     // 8. Update judge place attempt and place_detail_index
                     competitor_unwrapped.judge_place_attempt = competition.judge_place_attempt;
-                    competitor_unwrapped.place_details_index = place_index;
+                    competitor_unwrapped.competition_place_details_index = place_index;
                     self.competitors
                         .insert((id, competitor_address), &competitor_unwrapped);
                     // 9. Increase competitor placed count
@@ -1030,12 +1017,9 @@ mod az_trading_competition {
             // 10. Update competition
             self.competitions.insert(competition.id, &competition);
 
-            // 11. Update competition_place_details_ordered_by_competitor_final_value
-            self.competition_place_details_ordered_by_competitor_final_value
-                .insert(
-                    competition.id,
-                    &competition_place_details_ordered_by_competitor_final_value,
-                );
+            // 11. Update competition_place_details
+            self.competition_place_details
+                .insert(competition.id, &competition_place_details_vec);
 
             Ok(())
         }
@@ -1222,7 +1206,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: None,
                     judge_place_attempt: 0,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
 
@@ -1260,8 +1244,8 @@ mod az_trading_competition {
             competition.competitors_placed_count = 0;
             competition.judge_place_attempt += 1;
             self.competitions.insert(competition.id, &competition);
-            self.competition_place_details_ordered_by_competitor_final_value
-                .insert::<u64, std::vec::Vec<PlaceDetail>>(competition.id, &vec![]);
+            self.competition_place_details
+                .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
 
             Ok(())
         }
@@ -1775,26 +1759,22 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some("1".to_string()),
                     judge_place_attempt: 1,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
-            let mut competition_place_details_ordered_by_competitor_final_value =
-                az_trading_competition
-                    .competition_place_details_ordered_by_competitor_final_value
-                    .get(competition.id)
-                    .unwrap();
-            let mut place_detail: PlaceDetail = PlaceDetail {
+            let mut competition_place_details_vec = az_trading_competition
+                .competition_place_details
+                .get(competition.id)
+                .unwrap();
+            let mut competition_place_detail: CompetitionPlaceDetail = CompetitionPlaceDetail {
                 competitor_value: "1".to_string(),
                 competitors_count: 1,
                 payout_numerator: 0,
             };
-            competition_place_details_ordered_by_competitor_final_value.push(place_detail.clone());
+            competition_place_details_vec.push(competition_place_detail.clone());
             az_trading_competition
-                .competition_place_details_ordered_by_competitor_final_value
-                .insert(
-                    competition.id,
-                    &competition_place_details_ordered_by_competitor_final_value,
-                );
+                .competition_place_details
+                .insert(competition.id, &competition_place_details_vec);
             // ===== * it raises an error
             let result = az_trading_competition
                 .collect_prize(competition.id, mock_token_to_dia_price_symbol_combos()[0].0);
@@ -1805,15 +1785,12 @@ mod az_trading_competition {
                 ))
             );
             // ===== when place detail numerator is positive
-            place_detail.payout_numerator = 1;
-            competition_place_details_ordered_by_competitor_final_value.pop();
-            competition_place_details_ordered_by_competitor_final_value.push(place_detail);
+            competition_place_detail.payout_numerator = 1;
+            competition_place_details_vec.pop();
+            competition_place_details_vec.push(competition_place_detail);
             az_trading_competition
-                .competition_place_details_ordered_by_competitor_final_value
-                .insert(
-                    competition.id,
-                    &competition_place_details_ordered_by_competitor_final_value,
-                );
+                .competition_place_details
+                .insert(competition.id, &competition_place_details_vec);
             // ====== when competition token prize has been fully colleted already
             competition_token_prize.collected = competition_token_prize.amount;
             az_trading_competition.competition_token_prizes.insert(
@@ -2369,7 +2346,7 @@ mod az_trading_competition {
             let mut competitor: Competitor = Competitor {
                 final_value: Some(0.to_string()),
                 judge_place_attempt: 0,
-                place_details_index: 0,
+                competition_place_details_index: 0,
             };
             az_trading_competition
                 .competitors
@@ -2623,7 +2600,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some("1".to_string()),
                     judge_place_attempt: 0,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
             // ==== * it replaces the current next_judge with the caller
@@ -2751,7 +2728,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: django_final_value.clone(),
                     judge_place_attempt: 1,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
             // ===== * it raises an error
@@ -2771,7 +2748,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: django_final_value.clone(),
                     judge_place_attempt: 0,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
             // ====== when no competitors have been placed yet
@@ -2779,26 +2756,23 @@ mod az_trading_competition {
                 .place_competitors(competition.id, vec![accounts.django])
                 .unwrap();
             // ====== * it places the competitor in the first slot
-            let mut competition_place_details_ordered_by_competitor_final_value: Vec<PlaceDetail> =
+            let mut competition_place_details_vec: Vec<CompetitionPlaceDetail> =
                 az_trading_competition
-                    .competition_place_details_ordered_by_competitor_final_value
+                    .competition_place_details
                     .get(competition.id)
                     .unwrap();
             assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value[0].competitor_value,
+                competition_place_details_vec[0].competitor_value,
                 django_final_value.clone().unwrap(),
             );
-            assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value[0].competitors_count,
-                1
-            );
-            // ====== * it sets the competitor's place_details_index
+            assert_eq!(competition_place_details_vec[0].competitors_count, 1);
+            // ====== * it sets the competitor's competition_place_details_index
             assert_eq!(
                 az_trading_competition
                     .competitors
                     .get((competition.id, accounts.django))
                     .unwrap()
-                    .place_details_index,
+                    .competition_place_details_index,
                 0
             );
             // ====== when some competitors have been placed so far
@@ -2809,31 +2783,25 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: django_final_value.clone(),
                     judge_place_attempt: 0,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
             az_trading_competition
                 .place_competitors(competition.id, vec![accounts.charlie])
                 .unwrap();
-            competition_place_details_ordered_by_competitor_final_value = az_trading_competition
-                .competition_place_details_ordered_by_competitor_final_value
+            competition_place_details_vec = az_trading_competition
+                .competition_place_details
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value.len(),
-                1
-            );
-            assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value[0].competitors_count,
-                2
-            );
-            // ====== * it sets the competitor's place_details_index
+            assert_eq!(competition_place_details_vec.len(), 1);
+            assert_eq!(competition_place_details_vec[0].competitors_count, 2);
+            // ====== * it sets the competitor's competition_place_details_index
             assert_eq!(
                 az_trading_competition
                     .competitors
                     .get((competition.id, accounts.charlie))
                     .unwrap()
-                    .place_details_index,
+                    .competition_place_details_index,
                 0
             );
             // ======= when competitor has a higher final value than the last placed competitor
@@ -2843,36 +2811,30 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some(bob_final_value.clone()),
                     judge_place_attempt: 0,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
             az_trading_competition
                 .place_competitors(competition.id, vec![accounts.bob])
                 .unwrap();
             // ======= * it places the competitor onto the end
-            competition_place_details_ordered_by_competitor_final_value = az_trading_competition
-                .competition_place_details_ordered_by_competitor_final_value
+            competition_place_details_vec = az_trading_competition
+                .competition_place_details
                 .get(competition.id)
                 .unwrap();
+            assert_eq!(competition_place_details_vec.len(), 2);
             assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value.len(),
-                2
-            );
-            assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value[1].competitor_value,
+                competition_place_details_vec[1].competitor_value,
                 bob_final_value
             );
-            assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value[1].competitors_count,
-                1
-            );
-            // ======= * it sets the competitor's place_details_index
+            assert_eq!(competition_place_details_vec[1].competitors_count, 1);
+            // ======= * it sets the competitor's competition_place_details_index
             assert_eq!(
                 az_trading_competition
                     .competitors
                     .get((competition.id, accounts.bob))
                     .unwrap()
-                    .place_details_index,
+                    .competition_place_details_index,
                 1
             );
             // ======= when competitor has a lower final value than the last placed competitor
@@ -2881,7 +2843,7 @@ mod az_trading_competition {
                 &Competitor {
                     final_value: Some("0".to_string()),
                     judge_place_attempt: 0,
-                    place_details_index: 0,
+                    competition_place_details_index: 0,
                 },
             );
             // ======= it raises an error
@@ -3082,22 +3044,19 @@ mod az_trading_competition {
             );
             // ===== when all competitors haven't been placed
             competition.competitors_count = 2;
-            let mut competition_place_details_ordered_by_competitor_final_value: Vec<PlaceDetail> =
+            let mut competition_place_details_vec: Vec<CompetitionPlaceDetail> =
                 az_trading_competition
-                    .competition_place_details_ordered_by_competitor_final_value
+                    .competition_place_details
                     .get(competition.id)
                     .unwrap();
-            competition_place_details_ordered_by_competitor_final_value.push(PlaceDetail {
+            competition_place_details_vec.push(CompetitionPlaceDetail {
                 competitor_value: "123".to_string(),
                 competitors_count: 1,
                 payout_numerator: 1,
             });
             az_trading_competition
-                .competition_place_details_ordered_by_competitor_final_value
-                .insert(
-                    competition.id,
-                    &competition_place_details_ordered_by_competitor_final_value,
-                );
+                .competition_place_details
+                .insert(competition.id, &competition_place_details_vec);
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
@@ -3109,14 +3068,11 @@ mod az_trading_competition {
             // ===== * it sets the competitors_placed_count to zero
             assert_eq!(competition.competitors_placed_count, 0);
             // ===== * it resets place_details_ordered_by_competitor_final_value
-            competition_place_details_ordered_by_competitor_final_value = az_trading_competition
-                .competition_place_details_ordered_by_competitor_final_value
+            competition_place_details_vec = az_trading_competition
+                .competition_place_details
                 .get(competition.id)
                 .unwrap();
-            assert_eq!(
-                competition_place_details_ordered_by_competitor_final_value.len(),
-                0
-            );
+            assert_eq!(competition_place_details_vec.len(), 0);
             // ===== * it increases the judge_place_attempt by one
             assert_eq!(competition.judge_place_attempt, u128::MAX);
         }
