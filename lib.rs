@@ -337,6 +337,11 @@ mod az_trading_competition {
                 self.competition_place_details.get(id).ok_or(
                     AzTradingCompetitionError::NotFound("CompetitionPlaceDetail".to_string()),
                 )?;
+            if index >= competition_place_details_vec.len().try_into().unwrap() {
+                return Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionPlaceDetail".to_string(),
+                ));
+            }
 
             Ok(competition_place_details_vec[usize::try_from(index).unwrap()].clone())
         }
@@ -1609,6 +1614,15 @@ mod az_trading_competition {
                 .competition_place_details_show(0, 0)
                 .unwrap();
             assert_eq!(result, competition_place_detail);
+            // = when called with the incorrect index
+            // = * it raises an error
+            let result = az_trading_competition.competition_place_details_show(0, 1);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionPlaceDetail".to_string(),
+                ))
+            );
         }
 
         // === TEST HANDLES ===
