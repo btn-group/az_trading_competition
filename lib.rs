@@ -328,11 +328,17 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
-        pub fn competition_place_details_show(&self, id: u64, index: usize) -> Result<PlaceDetail> {
-            let competition_place_details_vec: Vec<PlaceDetail> =
-                self.competition_place_details_show.get(id).ok_or(
+        pub fn competition_place_details_show(
+            &self,
+            id: u64,
+            index: u32,
+        ) -> Result<CompetitionPlaceDetail> {
+            let competition_place_details_vec: Vec<CompetitionPlaceDetail> =
+                self.competition_place_details.get(id).ok_or(
                     AzTradingCompetitionError::NotFound("CompetitionPlaceDetail".to_string()),
-                );
+                )?;
+
+            Ok(competition_place_details_vec[usize::try_from(index).unwrap()].clone())
         }
 
         #[ink(message)]
@@ -1575,6 +1581,34 @@ mod az_trading_competition {
                 config.token_dia_price_symbols_vec,
                 mock_token_to_dia_price_symbol_combos()
             );
+        }
+
+        #[ink::test]
+        fn test_competition_place_details_show() {
+            let (_accounts, mut az_trading_competition) = init();
+            // when CompetitionPlaceDetail does not exist
+            let result = az_trading_competition.competition_place_details_show(0, 0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionPlaceDetail".to_string(),
+                ))
+            );
+            // when CompetitionPlaceDetail exists
+            let competition_place_detail: CompetitionPlaceDetail = CompetitionPlaceDetail {
+                competitor_value: "0".to_string(),
+                competitors_count: 1,
+                payout_numerator: 1,
+            };
+            az_trading_competition
+                .competition_place_details
+                .insert(0, &vec![competition_place_detail.clone()]);
+            // = when called with the correct index
+            // = * it returns the CompetitionPlaceDetail
+            let result: CompetitionPlaceDetail = az_trading_competition
+                .competition_place_details_show(0, 0)
+                .unwrap();
+            assert_eq!(result, competition_place_detail);
         }
 
         // === TEST HANDLES ===
