@@ -702,8 +702,6 @@ mod az_trading_competition {
                 // 3. Update payout_places if possible
                 if position >= competition.payout_places {
                     competition.payout_places = position + 1
-                } else {
-                    competition.payout_places = 99
                 }
                 // 4. Add to numerator sum
                 competition.payout_structure_numerator_sum += numerator;
