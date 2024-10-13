@@ -1042,6 +1042,32 @@ mod az_trading_competition {
             self.competition_place_details
                 .insert(competition.id, &competition_place_details_vec);
 
+            // 13. Send azero processing fee to judge if all competitors have been placed correctly
+            if competition.competitors_count == competition.competitors_placed_count {
+                let total_azero_processing_fee: Balance =
+                    Balance::from(competition.competitors_count) * competition.azero_processing_fee;
+                let azero_processing_fee_sent_for_setting_final_value: Balance =
+                    (U256::from(competition.azero_processing_fee)
+                        * U256::from(FINAL_VALUE_UPDATE_FEE_PERCENTAGE_NUMERATOR)
+                        / U256::from(PERCENTAGE_CALCULATION_DENOMINATOR))
+                    .as_u128()
+                        * Balance::from(competition.competitors_count);
+                let azero_processing_fee_to_send_to_judge: Balance =
+                    total_azero_processing_fee - azero_processing_fee_sent_for_setting_final_value;
+                if azero_processing_fee_to_send_to_judge > 0
+                    && self
+                        .env()
+                        .transfer(Self::env().caller(), azero_processing_fee_to_send_to_judge)
+                        .is_err()
+                {
+                    panic!(
+                        "requested transfer failed. this can be the case if the contract does not\
+                             have sufficient free funds or if the transfer would have brought the\
+                             contract's balance below minimum balance."
+                    )
+                }
+            }
+
             // emit event
             Self::emit_event(
                 self.env(),
@@ -2842,6 +2868,8 @@ mod az_trading_competition {
                 },
             );
             // ====== when no competitors have been placed yet
+            set_balance(contract_id(), MOCK_DEFAULT_AZERO_PROCESSING_FEE);
+            let bobs_balance: Balance = get_balance(accounts.bob);
             az_trading_competition
                 .place_competitors(competition.id, vec![accounts.django])
                 .unwrap();
@@ -2871,6 +2899,16 @@ mod az_trading_competition {
                     .competition_place_details_index,
                 0
             );
+            // ======= when all competitors have been placed in this call
+            // ======= * it sends the caller the total azero processing fee minus what was sent for setting competitors' final values
+            assert_eq!(
+                get_balance(contract_id()),
+                competition.azero_processing_fee
+                    * Balance::from(FINAL_VALUE_UPDATE_FEE_PERCENTAGE_NUMERATOR)
+                    / Balance::from(PERCENTAGE_CALCULATION_DENOMINATOR)
+                    * Balance::from(competition.competitors_count)
+            );
+            assert!(get_balance(accounts.bob) > bobs_balance);
             // ====== when some competitors have been placed so far
             // ======= when competitor has the same final value as the last placed competitor
             az_trading_competition.competitors.insert(
