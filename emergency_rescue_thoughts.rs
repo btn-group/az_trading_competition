@@ -12,3 +12,6 @@ pub fn emergency_rescue(&mut self, id: u64, token: AccountId) -> Result<()> {
 
     Ok(())
 }
+
+// - When happens in an emergency rescue situation with the fees from the failed judges?
+// - I think easiest way to go about it is to send it to the admin.
