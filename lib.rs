@@ -224,7 +224,8 @@ mod az_trading_competition {
         admin: AccountId,
         competition_judges: Mapping<(u64, AccountId), CompetitionJudge>,
         competition_payout_structure_numerators: Mapping<(u64, u16), u16>,
-        // Ordered- by competitor final value
+        // The value is a vector for easy resetting purposes.
+        // Mapping within a mapping is not allowed.
         competition_place_details: Mapping<u64, Vec<CompetitionPlaceDetail>>,
         competition_token_prices: Mapping<(u64, AccountId), Balance>,
         competition_token_prizes: Mapping<(u64, AccountId), CompetitionTokenPrize>,
