@@ -1,3 +1,5 @@
+# Thoughts about prizes
+
 - There's a possible u32::max number of users
 - If there's a tie how to slip up the prize between a possible 4,294,967,295 people.
 - Unlikely scenario but possible and should be accounted for.
