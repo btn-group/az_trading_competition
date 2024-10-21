@@ -1000,8 +1000,8 @@ mod az_trading_competition {
             if competition.judge != Self::env().caller() {
                 return Err(AzTradingCompetitionError::Unauthorised);
             }
-            // 3. Validate that the competition has ended
-            self.validate_competition_has_ended(competition.clone())?;
+            // 3. Validate that all competitors haven't been placed
+            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
             // 4. Validate that all competitors have had their final values set
             if competition.competitors_count != competition.competitor_final_value_updated_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -1126,6 +1126,7 @@ mod az_trading_competition {
                     .invoke()?;
                 }
                 // 11c. Refund next judge and reset
+                // Not that important to reset
                 if let Some(next_judge_unwrapped) = competition.next_judge {
                     PSP22Ref::transfer_builder(
                         &competition.entry_fee_token,
@@ -3048,20 +3049,24 @@ mod az_trading_competition {
             assert_eq!(result, Err(AzTradingCompetitionError::Unauthorised));
             // = when caller is the competition's judge
             set_caller::<DefaultEnvironment>(accounts.bob);
-            // == when competition hasn't ended
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(competition.end);
+            // == when all competitors have been placed
+            competition.competitors_placed_count = competition.competitors_count;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
             // == * it raises an error
             let result = az_trading_competition.place_competitors(0, vec![]);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Competition hasn't ended.".to_string(),
+                    "All competitors have been placed.".to_string(),
                 ))
             );
-            // == when competition has ended
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
-                competition.end + 1,
-            );
+            // == when all competitors have not been placed
+            competition.competitors_placed_count = 0;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
             // === when all competitors have not had their final values set
             competition.competitors_count = 1;
             az_trading_competition
@@ -3181,6 +3186,17 @@ mod az_trading_competition {
             );
             assert!(get_balance(accounts.bob) > bobs_balance);
             // ======= when some competitors have been placed so far
+            // These are the values of competition at this point
+            // competitors count = 1
+            // competitors competitors_placed_count = 0
+            // competition.payout_places = 2
+            set_balance(contract_id(), MOCK_DEFAULT_AZERO_PROCESSING_FEE * 6);
+            competition.competitors_placed_count = 1;
+            competition.competitors_count = 2;
+            competition.competitor_final_value_updated_count = 2;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
             // ======== when competitor has the same final value as the last placed competitor
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.charlie),
@@ -3215,6 +3231,12 @@ mod az_trading_competition {
                 0
             );
             // ======== when competitor has a higher final value than the last placed competitor
+            competition.competitors_count = 3;
+            competition.competitor_final_value_updated_count = 3;
+            competition.competitors_placed_count = 2;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
             let bob_final_value: String = "6".to_string();
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.bob),
@@ -3252,6 +3274,12 @@ mod az_trading_competition {
             // ======= * it sets the payout numerator for the second spot
             assert_eq!(competition_place_details_vec[1].payout_numerator, 0);
             // ======== when competitor has a lower final value than the last placed competitor
+            competition.competitors_count = 4;
+            competition.competitor_final_value_updated_count = 4;
+            competition.competitors_placed_count = 3;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.frank),
                 &Competitor {
