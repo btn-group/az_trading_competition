@@ -941,6 +941,41 @@ mod az_trading_competition {
         }
 
         #[ink(message)]
+        pub fn emergency_rescue(&mut self, id: u64, token: AccountId) -> Result<Balance> {
+            let caller: AccountId = Self::env().caller();
+            // 1. Get competition
+            let competition: Competition = self.competitions_show(id)?;
+            // 2. Validation that competition judge_place_attempt is at max
+            self.validate_competition_judge_place_attempt_is_at_max(competition)?;
+            // 3. Get CompetitionTokenCompetitor
+            let mut competition_token_competitor: CompetitionTokenCompetitor =
+                self.competition_token_competitors_show(id, token, caller)?;
+            // 4. Validate that token hasn't been collected yet
+            if competition_token_competitor.collected {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Token has already been collected.".to_string(),
+                ));
+            }
+            // 5. Validate that amount is larger than zero
+            if competition_token_competitor.amount == 0 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Amount is zero.".to_string(),
+                ));
+            }
+
+            // 6. Update competition_token_competitor
+            competition_token_competitor.collected = true;
+            self.competition_token_competitors
+                .insert((id, token, caller), &competition_token_competitor);
+            // 7. Send token to competitor
+            PSP22Ref::transfer_builder(&token, caller, competition_token_competitor.amount, vec![])
+                .call_flags(CallFlags::default())
+                .invoke()?;
+
+            Ok(competition_token_competitor.amount)
+        }
+
+        #[ink(message)]
         pub fn increase_allowance_for_router(
             &mut self,
             token: AccountId,
@@ -1579,6 +1614,19 @@ mod az_trading_competition {
             {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Competition isn't in progress.".to_string(),
+                ));
+            }
+
+            Ok(())
+        }
+
+        fn validate_competition_judge_place_attempt_is_at_max(
+            &self,
+            competition: Competition,
+        ) -> Result<()> {
+            if competition.judge_place_attempt < u128::MAX {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Judge place attempt must be u128 max.".to_string(),
                 ));
             }
 
@@ -2421,65 +2469,6 @@ mod az_trading_competition {
         }
 
         #[ink::test]
-        fn test_deregister() {
-            let (accounts, mut az_trading_competition) = init();
-            // when competition does not exist
-            // * it raises an error
-            let result = az_trading_competition.deregister(0);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::NotFound(
-                    "Competition".to_string(),
-                ))
-            );
-            // when competition exist
-            az_trading_competition
-                .competitions_create(
-                    MOCK_START,
-                    MOCK_START + MINIMUM_DURATION,
-                    mock_entry_fee_token(),
-                    MOCK_ENTRY_FEE_AMOUNT,
-                    None,
-                    None,
-                )
-                .unwrap();
-            // = when caller is not registered
-            // = * it raises an error
-            let result = az_trading_competition.deregister(0);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::NotFound(
-                    "CompetitionTokenCompetitor".to_string(),
-                ))
-            );
-            // = when caller is registered
-            az_trading_competition.competition_token_competitors.insert(
-                (0, mock_entry_fee_token(), accounts.bob),
-                &CompetitionTokenCompetitor {
-                    amount: MOCK_ENTRY_FEE_AMOUNT,
-                    collected: false,
-                },
-            );
-            // == when competition has started
-            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
-            // === when competitor count is equal to or greater than payout places
-            // === * it raises an error
-            let result = az_trading_competition.deregister(0);
-            assert_eq!(
-                result,
-                Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Unable to deregister when competition has started and minimum competitor requirements met.".to_string(),
-                ))
-            );
-            // == NEEDS TO BE DONE IN INTEGRATION TESTS
-            // === when competitor count is less than the amount of payout places
-            // == when competition hasn't started
-            // == * it sends the entry fee back to caller
-            // == * it removes competition token competitor
-            // == * it decreases the competitor count
-        }
-
-        #[ink::test]
         fn test_competitor_final_value_update() {
             let (accounts, mut az_trading_competition) = init();
             // when competition does not exist
@@ -2633,6 +2622,154 @@ mod az_trading_competition {
                     < (caller_balance + MOCK_DEFAULT_AZERO_PROCESSING_FEE * 110 / 1000)
             );
             assert_eq!(0, get_balance(contract_id()))
+        }
+
+        #[ink::test]
+        fn test_deregister() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.deregister(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // = when caller is not registered
+            // = * it raises an error
+            let result = az_trading_competition.deregister(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionTokenCompetitor".to_string(),
+                ))
+            );
+            // = when caller is registered
+            az_trading_competition.competition_token_competitors.insert(
+                (0, mock_entry_fee_token(), accounts.bob),
+                &CompetitionTokenCompetitor {
+                    amount: MOCK_ENTRY_FEE_AMOUNT,
+                    collected: false,
+                },
+            );
+            // == when competition has started
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(MOCK_START);
+            // === when competitor count is equal to or greater than payout places
+            // === * it raises an error
+            let result = az_trading_competition.deregister(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Unable to deregister when competition has started and minimum competitor requirements met.".to_string(),
+                ))
+            );
+            // == NEEDS TO BE DONE IN INTEGRATION TESTS
+            // === when competitor count is less than the amount of payout places
+            // == when competition hasn't started
+            // == * it sends the entry fee back to caller
+            // == * it removes competition token competitor
+            // == * it decreases the competitor count
+        }
+
+        #[ink::test]
+        fn test_emergency_rescue() {
+            let (accounts, mut az_trading_competition) = init();
+            // when competition does not exist
+            // * it raises an error
+            let result = az_trading_competition.deregister(0);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "Competition".to_string(),
+                ))
+            );
+            // when competition exist
+            let mut competition: Competition = az_trading_competition
+                .competitions_create(
+                    MOCK_START,
+                    MOCK_START + MINIMUM_DURATION,
+                    mock_entry_fee_token(),
+                    MOCK_ENTRY_FEE_AMOUNT,
+                    None,
+                    None,
+                )
+                .unwrap();
+            // = when competition judge_place_attempt is less than the max
+            competition.judge_place_attempt = u128::MAX - 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // = * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Judge place attempt must be u128 max.".to_string(),
+                ))
+            );
+            // = when competition judge_place_attempt is at max
+            competition.judge_place_attempt = u128::MAX;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // == when competition token competitor doesn't exist
+            // == * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::NotFound(
+                    "CompetitionTokenCompetitor".to_string(),
+                ))
+            );
+            // == when competition token competitor exists
+            let mut competition_token_competitor: CompetitionTokenCompetitor =
+                CompetitionTokenCompetitor {
+                    amount: 1,
+                    collected: true,
+                };
+            // === when amount has already been collected
+            az_trading_competition.competition_token_competitors.insert(
+                (competition.id, accounts.django, accounts.bob),
+                &competition_token_competitor,
+            );
+            // === * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Token has already been collected.".to_string(),
+                ))
+            );
+            // === when amount hasn't been collected
+            competition_token_competitor.collected = false;
+            // ==== when amount is zero
+            competition_token_competitor.amount = 0;
+            az_trading_competition.competition_token_competitors.insert(
+                (competition.id, accounts.django, accounts.bob),
+                &competition_token_competitor,
+            );
+            // ==== * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Amount is zero.".to_string(),
+                ))
+            );
+            // ===== when amount is positive
+            // REST NEEDS TO BE TESTED IN INTEGRATION TEST
         }
 
         #[ink::test]
