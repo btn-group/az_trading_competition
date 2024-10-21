@@ -1126,7 +1126,6 @@ mod az_trading_competition {
                     .invoke()?;
                 }
                 // 11c. Refund next judge and reset
-                // Not that important to reset
                 if let Some(next_judge_unwrapped) = competition.next_judge {
                     PSP22Ref::transfer_builder(
                         &competition.entry_fee_token,
@@ -1419,6 +1418,30 @@ mod az_trading_competition {
             // Update competition place details vec
             self.competition_place_details
                 .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
+
+            // Refund judge and next judge if this is the last possible reset
+            if competition.judge_place_attempt == u128::MAX {
+                PSP22Ref::transfer_builder(
+                    &competition.entry_fee_token,
+                    competition.judge,
+                    competition.entry_fee_amount,
+                    vec![],
+                )
+                .call_flags(CallFlags::default())
+                .invoke()?;
+                if let Some(next_judge_unwrapped) = competition.next_judge {
+                    PSP22Ref::transfer_builder(
+                        &competition.entry_fee_token,
+                        next_judge_unwrapped,
+                        competition.entry_fee_amount,
+                        vec![],
+                    )
+                    .call_flags(CallFlags::default())
+                    .invoke()?;
+                    competition.next_judge = None;
+                    self.competitions.insert(competition.id, &competition);
+                }
+            }
 
             // emit event
             Self::emit_event(self.env(), Event::Reset(Reset { id: competition.id }));
@@ -3457,7 +3480,7 @@ mod az_trading_competition {
                 ))
             );
             // == when judge_place_attempt has not reached the maximum.
-            competition.judge_place_attempt -= 1;
+            competition.judge_place_attempt -= 2;
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
@@ -3539,7 +3562,8 @@ mod az_trading_competition {
                 .unwrap();
             assert_eq!(competition_place_details_vec.len(), 0);
             // ====== * it increases the judge_place_attempt by one
-            assert_eq!(competition.judge_place_attempt, u128::MAX);
+            assert_eq!(competition.judge_place_attempt, u128::MAX - 1);
+            // SENDING FEE BACK TO JUDGE AND NEXT JUDGE WILL HAVE TO BE TESTED IN INTEGRATION TEST
         }
 
         #[ink::test]
