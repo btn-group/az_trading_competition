@@ -1365,12 +1365,15 @@ mod az_trading_competition {
                 ));
             }
 
+            // Update competition judge
             competition_judge.resets += 1;
-            competition.competitors_placed_count = 0;
-            competition.judge_place_attempt += 1;
             self.competition_judges
                 .insert((id, caller), &competition_judge);
+            // Update competition
+            competition.competitors_placed_count = 0;
+            competition.judge_place_attempt += 1;
             self.competitions.insert(competition.id, &competition);
+            // Update competition place details vec
             self.competition_place_details
                 .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
 
