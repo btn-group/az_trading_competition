@@ -973,9 +973,16 @@ mod az_trading_competition {
                     "All competitors have not had their final values updated.".to_string(),
                 ));
             }
+            // 5. Validate that competition.judge_place_attempt < u128::MAX so that nobody is placed
+            // during emergency rescue
+            if competition.judge_place_attempt == u128::MAX {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competitors can't be placed anymore. Please advise competitors to use emergency rescue.".to_string(),
+                ));
+            }
             let mut competition_place_details_vec: Vec<CompetitionPlaceDetail> =
                 self.competition_place_details.get(competition.id).unwrap();
-            // 5. Go through competitors
+            // 6. Go through competitors
             for competitor_address in competitors_addresses.iter() {
                 // 6a. Validate that competitor_address belongs to a competitor
                 // 6b. Validate that competitor hasn't been placed yet
@@ -990,7 +997,7 @@ mod az_trading_competition {
 
                     let competitor_final_value: String =
                         competitor_unwrapped.final_value.clone().unwrap();
-                    // 7. Place competitor by checking place_details_ordered_by_competitor_final_value
+                    // 6c. Place competitor by checking place_details_ordered_by_competitor_final_value
                     let competition_place_details_vec_len = competition_place_details_vec.len();
                     let payout_numerator: u16 =
                         self.payout_numerator_for_next_place(competition.clone());
@@ -1030,12 +1037,12 @@ mod az_trading_competition {
                             ));
                         }
                     }
-                    // 8. Update judge place attempt and place_detail_index
+                    // 7. Update judge place attempt and place_detail_index
                     competitor_unwrapped.judge_place_attempt = competition.judge_place_attempt;
                     competitor_unwrapped.competition_place_details_index = place_index;
                     self.competitors
                         .insert((id, competitor_address), &competitor_unwrapped);
-                    // 9. Increase competitor placed count
+                    // 8. Increase competitor placed count
                     competition.competitors_placed_count += 1;
                 } else {
                     return Err(AzTradingCompetitionError::NotFound(
@@ -1044,16 +1051,16 @@ mod az_trading_competition {
                 }
             }
 
-            // 10. Update competition
+            // 9. Update competition
             self.competitions.insert(competition.id, &competition);
 
-            // 11. Update competition_place_details
+            // 10. Update competition_place_details
             self.competition_place_details
                 .insert(competition.id, &competition_place_details_vec);
 
-            // 13. When all competitors have been placed correctly
+            // 11. When all competitors have been placed correctly
             if competition.competitors_count == competition.competitors_placed_count {
-                // 13a. Send azero processing fee to judge
+                // 11a. Send azero processing fee to judge
                 let total_azero_processing_fee: Balance =
                     Balance::from(competition.competitors_count) * competition.azero_processing_fee;
                 let azero_processing_fee_sent_for_setting_final_value: Balance =
@@ -1076,7 +1083,7 @@ mod az_trading_competition {
                              contract's balance below minimum balance."
                     )
                 }
-                // 13b. Send next judge fee back to judge if they aren't the admin as admin never paid
+                // 11b. Send next judge fee back to judge if they aren't the admin as admin never paid
                 if Self::env().caller() != self.admin {
                     PSP22Ref::transfer_builder(
                         &competition.entry_fee_token,
@@ -2899,17 +2906,35 @@ mod az_trading_competition {
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
-            // ==== when any of the competitors are not part of the competition
-            let result = az_trading_competition.place_competitors(0, vec![accounts.django]);
+            // ==== when competition judge_place_attempt has reached maximum
+            competition.judge_place_attempt = u128::MAX;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
             // ==== * it raises an error
+            let result = az_trading_competition.place_competitors(0, vec![]);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competitors can't be placed anymore. Please advise competitors to use emergency rescue.".to_string(),
+                ))
+            );
+            // ==== when competition judge_place_attempt is less than maximum
+            competition.judge_place_attempt = 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // ===== when any of the competitors are not part of the competition
+            let result = az_trading_competition.place_competitors(0, vec![accounts.django]);
+            // ===== * it raises an error
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::NotFound(
                     "Competitor".to_string(),
                 ))
             );
-            // ==== when all competitors are part of the competition
-            // ===== when any of the competitors have been placed in this placement round already
+            // ===== when all competitors are part of the competition
+            // ====== when any of the competitors have been placed in this placement round already
             let django_final_value: Option<String> = Some("5".to_string());
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.django),
@@ -2919,7 +2944,7 @@ mod az_trading_competition {
                     competition_place_details_index: 0,
                 },
             );
-            // ===== * it raises an error
+            // ====== * it raises an error
             let result = az_trading_competition.place_competitors(0, vec![accounts.django]);
             assert_eq!(
                 result,
@@ -2927,7 +2952,7 @@ mod az_trading_competition {
                     "Competitor has already been placed.".to_string(),
                 ))
             );
-            // ===== when all of the competitors haven't been placed in this placement round
+            // ====== when all of the competitors haven't been placed in this placement round
             az_trading_competition
                 .competitors
                 .remove((competition.id, accounts.django));
@@ -2939,13 +2964,13 @@ mod az_trading_competition {
                     competition_place_details_index: 0,
                 },
             );
-            // ====== when no competitors have been placed yet
+            // ======= when no competitors have been placed yet
             set_balance(contract_id(), MOCK_DEFAULT_AZERO_PROCESSING_FEE);
             let bobs_balance: Balance = get_balance(accounts.bob);
             az_trading_competition
                 .place_competitors(competition.id, vec![accounts.django])
                 .unwrap();
-            // ====== * it places the competitor in the first slot
+            // ======= * it places the competitor in the first slot
             let mut competition_place_details_vec: Vec<CompetitionPlaceDetail> =
                 az_trading_competition
                     .competition_place_details
@@ -2955,14 +2980,14 @@ mod az_trading_competition {
                 competition_place_details_vec[0].competitor_value,
                 django_final_value.clone().unwrap(),
             );
-            // ====== * it sets the competitor count to 1
+            // ======= * it sets the competitor count to 1
             assert_eq!(competition_place_details_vec[0].competitors_count, 1);
-            // ====== * it sets the payout numerator for the first spot
+            // ======= * it sets the payout numerator for the first spot
             assert_eq!(
                 competition_place_details_vec[0].payout_numerator,
                 payout_structure[0].1
             );
-            // ====== * it sets the competitor's competition_place_details_index
+            // ======= * it sets the competitor's competition_place_details_index
             assert_eq!(
                 az_trading_competition
                     .competitors
@@ -2971,8 +2996,8 @@ mod az_trading_competition {
                     .competition_place_details_index,
                 0
             );
-            // ======= when all competitors have been placed in this call
-            // ======= * it sends the caller the total azero processing fee minus what was sent for setting competitors' final values
+            // ======== when all competitors have been placed in this call
+            // ======== * it sends the caller the total azero processing fee minus what was sent for setting competitors' final values
             assert_eq!(
                 get_balance(contract_id()),
                 competition.azero_processing_fee
@@ -2981,8 +3006,8 @@ mod az_trading_competition {
                     * Balance::from(competition.competitors_count)
             );
             assert!(get_balance(accounts.bob) > bobs_balance);
-            // ====== when some competitors have been placed so far
-            // ======= when competitor has the same final value as the last placed competitor
+            // ======= when some competitors have been placed so far
+            // ======== when competitor has the same final value as the last placed competitor
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.charlie),
                 &Competitor {
@@ -2998,15 +3023,15 @@ mod az_trading_competition {
                 .competition_place_details
                 .get(competition.id)
                 .unwrap();
-            // ======= * it adds to the latest place's count
+            // ======== * it adds to the latest place's count
             assert_eq!(competition_place_details_vec.len(), 1);
             assert_eq!(competition_place_details_vec[0].competitors_count, 2);
-            // ====== * it adds to the latest place's numerator
+            // ======= * it adds to the latest place's numerator
             assert_eq!(
                 competition_place_details_vec[0].payout_numerator,
                 payout_structure[0].1 + payout_structure[1].1
             );
-            // ====== * it sets the competitor's competition_place_details_index
+            // ======= * it sets the competitor's competition_place_details_index
             assert_eq!(
                 az_trading_competition
                     .competitors
@@ -3015,7 +3040,7 @@ mod az_trading_competition {
                     .competition_place_details_index,
                 0
             );
-            // ======= when competitor has a higher final value than the last placed competitor
+            // ======== when competitor has a higher final value than the last placed competitor
             let bob_final_value: String = "6".to_string();
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.bob),
@@ -3028,7 +3053,7 @@ mod az_trading_competition {
             az_trading_competition
                 .place_competitors(competition.id, vec![accounts.bob])
                 .unwrap();
-            // ======= * it places the competitor onto the end
+            // ======== * it places the competitor onto the end
             competition_place_details_vec = az_trading_competition
                 .competition_place_details
                 .get(competition.id)
@@ -3039,7 +3064,7 @@ mod az_trading_competition {
                 bob_final_value
             );
             assert_eq!(competition_place_details_vec[1].competitors_count, 1);
-            // ======= * it sets the competitor's competition_place_details_index
+            // ======== * it sets the competitor's competition_place_details_index
             assert_eq!(
                 az_trading_competition
                     .competitors
@@ -3048,11 +3073,11 @@ mod az_trading_competition {
                     .competition_place_details_index,
                 1
             );
-            // ====== * it sets the competitor count to 1
+            // ======= * it sets the competitor count to 1
             assert_eq!(competition_place_details_vec[1].competitors_count, 1);
-            // ====== * it sets the payout numerator for the second spot
+            // ======= * it sets the payout numerator for the second spot
             assert_eq!(competition_place_details_vec[1].payout_numerator, 0);
-            // ======= when competitor has a lower final value than the last placed competitor
+            // ======== when competitor has a lower final value than the last placed competitor
             az_trading_competition.competitors.insert(
                 (competition.id, accounts.frank),
                 &Competitor {
@@ -3061,7 +3086,7 @@ mod az_trading_competition {
                     competition_place_details_index: 0,
                 },
             );
-            // ======= it raises an error
+            // ======== it raises an error
             let result =
                 az_trading_competition.place_competitors(competition.id, vec![accounts.frank]);
             assert_eq!(
@@ -3070,7 +3095,7 @@ mod az_trading_competition {
                     "Competitor is in the wrong place.".to_string(),
                 ))
             );
-            // ===== * it updates competitors' placement rounds
+            // ====== * it updates competitors' placement rounds
             assert_eq!(
                 az_trading_competition
                     .competitors
