@@ -1125,6 +1125,19 @@ mod az_trading_competition {
                     .call_flags(CallFlags::default())
                     .invoke()?;
                 }
+                // 11c. Refund next judge and reset
+                if let Some(next_judge_unwrapped) = competition.next_judge {
+                    PSP22Ref::transfer_builder(
+                        &competition.entry_fee_token,
+                        next_judge_unwrapped,
+                        competition.entry_fee_amount,
+                        vec![],
+                    )
+                    .call_flags(CallFlags::default())
+                    .invoke()?;
+                    competition.next_judge = None;
+                    self.competitions.insert(competition.id, &competition);
+                }
             }
 
             // emit event
