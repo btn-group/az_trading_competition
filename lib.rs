@@ -103,6 +103,12 @@ mod az_trading_competition {
     }
 
     #[ink(event)]
+    pub struct Reset {
+        #[ink(topic)]
+        id: u64,
+    }
+
+    #[ink(event)]
     pub struct Swap {
         id: u64,
         competitor: AccountId,
@@ -1360,6 +1366,9 @@ mod az_trading_competition {
             self.competitions.insert(competition.id, &competition);
             self.competition_place_details
                 .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
+
+            // emit event
+            Self::emit_event(self.env(), Event::Reset(Reset { id: competition.id }));
 
             Ok(())
         }
