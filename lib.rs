@@ -172,6 +172,7 @@ mod az_trading_competition {
     )]
     pub struct CompetitionJudge {
         pub deadline: Timestamp,
+        pub resets: u8,
     }
 
     #[derive(scale::Decode, scale::Encode, Debug, Clone, PartialEq)]
@@ -628,6 +629,7 @@ mod az_trading_competition {
                 (competition.id, competition.judge),
                 &CompetitionJudge {
                     deadline: competition.end + DAY_IN_MS,
+                    resets: 0,
                 },
             );
 
@@ -1218,8 +1220,13 @@ mod az_trading_competition {
             } else {
                 current_judge_deadline + DAY_IN_MS
             };
-            self.competition_judges
-                .insert((id, caller), &CompetitionJudge { deadline });
+            self.competition_judges.insert(
+                (id, caller),
+                &CompetitionJudge {
+                    deadline,
+                    resets: 0,
+                },
+            );
             // 7. Acqire fee from next judge
             self.acquire_psp22(
                 competition.entry_fee_token,
@@ -1337,9 +1344,19 @@ mod az_trading_competition {
                 ));
             }
             self.validate_all_competitors_have_not_been_placed(competition.clone())?;
+            let mut competition_judge: CompetitionJudge =
+                self.competition_judges.get((id, caller)).unwrap();
+            if competition_judge.resets >= 10 {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Judge can only reset 10 times.".to_string(),
+                ));
+            }
 
+            competition_judge.resets += 1;
             competition.competitors_placed_count = 0;
             competition.judge_place_attempt += 1;
+            self.competition_judges
+                .insert((id, caller), &competition_judge);
             self.competitions.insert(competition.id, &competition);
             self.competition_place_details
                 .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
@@ -2656,6 +2673,7 @@ mod az_trading_competition {
                 (competition.id, competition.judge),
                 &CompetitionJudge {
                     deadline: MOCK_START,
+                    resets: 0,
                 },
             );
             // === * it raises an error
@@ -3249,20 +3267,42 @@ mod az_trading_competition {
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
+            // ====== when just has reset 10 times already
+            let mut competition_judge: CompetitionJudge = az_trading_competition
+                .competition_judges
+                .get((competition.id, competition.judge))
+                .unwrap();
+            competition_judge.resets = 10;
+            az_trading_competition
+                .competition_judges
+                .insert((competition.id, competition.judge), &competition_judge);
+            // ====== * it raises an error
+            let result = az_trading_competition.reset(competition.id);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Judge can only reset 10 times.".to_string(),
+                ))
+            );
+            // ====== when just has reset less than 10 times
+            competition_judge.resets = 9;
+            az_trading_competition
+                .competition_judges
+                .insert((competition.id, competition.judge), &competition_judge);
+            // ====== * it sets the competitors_placed_count to zero
             az_trading_competition.reset(competition.id).unwrap();
             competition = az_trading_competition
                 .competitions
                 .get(competition.id)
                 .unwrap();
-            // ===== * it sets the competitors_placed_count to zero
             assert_eq!(competition.competitors_placed_count, 0);
-            // ===== * it resets place_details_ordered_by_competitor_final_value
+            // ====== * it resets place_details_ordered_by_competitor_final_value
             competition_place_details_vec = az_trading_competition
                 .competition_place_details
                 .get(competition.id)
                 .unwrap();
             assert_eq!(competition_place_details_vec.len(), 0);
-            // ===== * it increases the judge_place_attempt by one
+            // ====== * it increases the judge_place_attempt by one
             assert_eq!(competition.judge_place_attempt, u128::MAX);
         }
 
