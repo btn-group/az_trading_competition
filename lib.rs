@@ -1428,8 +1428,9 @@ mod az_trading_competition {
             self.competition_place_details
                 .insert::<u64, std::vec::Vec<CompetitionPlaceDetail>>(competition.id, &vec![]);
 
-            // Refund judge and next judge if this is the last possible reset
+            // when limit has been reached
             if competition.judge_place_attempt == u128::MAX {
+                // Refund judge their fee
                 PSP22Ref::transfer_builder(
                     &competition.entry_fee_token,
                     competition.judge,
@@ -1438,6 +1439,7 @@ mod az_trading_competition {
                 )
                 .call_flags(CallFlags::default())
                 .invoke()?;
+                // Refund next_judge and reset if present
                 if let Some(next_judge_unwrapped) = competition.next_judge {
                     PSP22Ref::transfer_builder(
                         &competition.entry_fee_token,
@@ -1449,6 +1451,17 @@ mod az_trading_competition {
                     .invoke()?;
                     competition.next_judge = None;
                     self.competitions.insert(competition.id, &competition);
+                }
+                // Send judge_failed_fees_sum to admin
+                if competition.judge_failed_fees_sum > 0 {
+                    PSP22Ref::transfer_builder(
+                        &competition.entry_fee_token,
+                        self.admin,
+                        competition.entry_fee_amount,
+                        vec![],
+                    )
+                    .call_flags(CallFlags::default())
+                    .invoke()?;
                 }
             }
 
