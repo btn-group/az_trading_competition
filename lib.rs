@@ -161,6 +161,7 @@ mod az_trading_competition {
         pub azero_processing_fee: Balance,
         pub judge: AccountId,
         pub judge_place_attempt: u128,
+        pub judge_failed_fees_sum: Balance,
         pub next_judge: Option<AccountId>,
         pub payout_places: u16,
         pub payout_structure_numerator_sum: u16,
@@ -617,6 +618,7 @@ mod az_trading_competition {
                 azero_processing_fee: azero_processing_fee
                     .unwrap_or(self.default_azero_processing_fee),
                 judge: self.admin,
+                judge_failed_fees_sum: 0,
                 // has to start at 1 as all competitors start at 0
                 judge_place_attempt: 1,
                 next_judge: None,
@@ -1174,14 +1176,21 @@ mod az_trading_competition {
                     ));
                 }
 
-                // 5. Add judge's fee to competition prize pool if judge isn't the admin as admin never paid
+                // 5. If judge isn't the admin
                 if competition.judge != self.admin {
-                    // This will always exist as it's the entry fee token
-                    let mut competition_token_prize: CompetitionTokenPrize =
-                        self.competition_token_prizes_show(id, competition.entry_fee_token)?;
+                    // 5a. Add judge's fee to competition prize pool if judge isn't the admin as admin never paid
+                    let mut competition_token_prize: CompetitionTokenPrize = self
+                        .competition_token_prizes
+                        .get((id, competition.entry_fee_token))
+                        .unwrap_or(CompetitionTokenPrize {
+                            amount: 0,
+                            collected: 0,
+                        });
                     competition_token_prize.amount += competition.entry_fee_amount;
                     self.competition_token_prizes
                         .insert((id, competition.entry_fee_token), &competition_token_prize);
+                    // 5b. Add to competition.judge_failed_fees_sum
+                    competition.judge_failed_fees_sum += competition.entry_fee_amount;
                 }
 
                 // 6. Update judge and next_judge
@@ -2892,8 +2901,44 @@ mod az_trading_competition {
             assert_eq!(competition.judge, accounts.django);
             // === * it resets the next_judge
             assert_eq!(competition.next_judge, None);
-            // INTEGRATION TEST NEEDED TO TEST ADDING NEXT JUDGE FEE BACK OF PREVIOUS JUDGE
-            // TO PRIZE POOL
+            // ==== when current judge is the admin
+            // ==== * it doesn't add to the prize pool
+            let mut competition_token_prize: CompetitionTokenPrize = az_trading_competition
+                .competition_token_prizes
+                .get((competition.id, competition.entry_fee_token))
+                .unwrap_or(CompetitionTokenPrize {
+                    amount: 0,
+                    collected: 0,
+                });
+            assert_eq!(competition_token_prize.amount, 0);
+            // ==== * it doesn't add to judge_failed_fees_sum
+            assert_eq!(competition.judge_failed_fees_sum, 0);
+            // ==== when current just is not the admin
+            az_trading_competition.competition_judges.insert(
+                (competition.id, competition.judge),
+                &CompetitionJudge {
+                    deadline: MOCK_START,
+                    resets: 0,
+                },
+            );
+            competition.next_judge = Some(accounts.charlie);
+            az_trading_competition.competitions.insert(0, &competition);
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                MOCK_START + DAY_IN_MS,
+            );
+            az_trading_competition.judge_update(0).unwrap();
+            // ==== * it adds to the prize pool
+            competition_token_prize = az_trading_competition
+                .competition_token_prizes
+                .get((competition.id, competition.entry_fee_token))
+                .unwrap();
+            assert_eq!(competition_token_prize.amount, competition.entry_fee_amount);
+            // ==== * it adds to judge_failled_fees_sum
+            competition = az_trading_competition.competitions.get(0).unwrap();
+            assert_eq!(
+                competition.judge_failed_fees_sum,
+                competition.entry_fee_amount
+            );
         }
 
         #[ink::test]
