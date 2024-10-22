@@ -947,8 +947,8 @@ mod az_trading_competition {
             let caller: AccountId = Self::env().caller();
             // 1. Get competition
             let competition: Competition = self.competitions_show(id)?;
-            // 2. Validation that competition judge_place_attempt is at max
-            self.validate_competition_judge_place_attempt_is_at_max(competition)?;
+            // 2. Validation that competition is emergency rescuable
+            self.validate_competition_emergency_rescuable(&competition)?;
             // 3. Get CompetitionTokenCompetitor
             let mut competition_token_competitor: CompetitionTokenCompetitor =
                 self.competition_token_competitors_show(id, token, caller)?;
@@ -1003,7 +1003,7 @@ mod az_trading_competition {
                 return Err(AzTradingCompetitionError::Unauthorised);
             }
             // 3. Validate that all competitors haven't been placed
-            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
+            self.validate_all_competitors_have_not_been_placed(&competition)?;
             // 4. Validate that all competitors have had their final values set
             if competition.competitors_count != competition.competitor_final_value_updated_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -1160,7 +1160,7 @@ mod az_trading_competition {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that competitor's haven't been placed yet
-            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
+            self.validate_all_competitors_have_not_been_placed(&competition)?;
             // 3. Validate that next judge exists
             if let Some(next_judge_unwrapped) = competition.next_judge {
                 let current_timestamp: Timestamp = Self::env().block_timestamp();
@@ -1221,7 +1221,7 @@ mod az_trading_competition {
             // 1. Get competition
             let mut competition: Competition = self.competitions_show(id)?;
             // 2. Validate that all competitors haven't been placed yet
-            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
+            self.validate_all_competitors_have_not_been_placed(&competition)?;
             // 3. Validate that competition judge_place_attempt is less than max
             self.validate_competition_judge_place_attempt_is_less_than_max(&competition)?;
             // 4. Validate that caller hasn't been a competition judge yet
@@ -1407,7 +1407,7 @@ mod az_trading_competition {
                     "Zero competitors have been placed.".to_string(),
                 ));
             }
-            self.validate_all_competitors_have_not_been_placed(competition.clone())?;
+            self.validate_all_competitors_have_not_been_placed(&competition)?;
             let mut competition_judge: CompetitionJudge =
                 self.competition_judges.get((id, caller)).unwrap();
             if competition_judge.resets >= 10 {
@@ -1620,7 +1620,7 @@ mod az_trading_competition {
 
         fn validate_all_competitors_have_not_been_placed(
             &self,
-            competition: Competition,
+            competition: &Competition,
         ) -> Result<()> {
             if competition.competitors_placed_count == competition.competitors_count {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
@@ -1629,6 +1629,25 @@ mod az_trading_competition {
             }
 
             Ok(())
+        }
+
+        // Either judge_place_attempt is at max
+        // or competitors haven't been placed and timestamp is after competition judgment deadline
+        fn validate_competition_emergency_rescuable(
+            &self,
+            competition: &Competition,
+        ) -> Result<()> {
+            self.validate_all_competitors_have_not_been_placed(&competition)?;
+
+            if Self::env().block_timestamp() > (competition.end + (DAY_IN_MS * 365))
+                || competition.judge_place_attempt == u128::MAX
+            {
+                Ok(())
+            } else {
+                return Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition can still be judged.".to_string(),
+                ));
+            }
         }
 
         fn validate_competition_has_ended(&self, competition: Competition) -> Result<()> {
@@ -1680,19 +1699,6 @@ mod az_trading_competition {
             if competition.judge_place_attempt == u128::MAX {
                 return Err(AzTradingCompetitionError::UnprocessableEntity(
                     "Judge place attempt must be less than u128 max.".to_string(),
-                ));
-            }
-
-            Ok(())
-        }
-
-        fn validate_competition_judge_place_attempt_is_at_max(
-            &self,
-            competition: Competition,
-        ) -> Result<()> {
-            if competition.judge_place_attempt < u128::MAX {
-                return Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Judge place attempt must be u128 max.".to_string(),
                 ));
             }
 
@@ -2772,26 +2778,44 @@ mod az_trading_competition {
                     None,
                 )
                 .unwrap();
-            // = when competition judge_place_attempt is less than the max
-            competition.judge_place_attempt = u128::MAX - 1;
-            az_trading_competition
-                .competitions
-                .insert(competition.id, &competition);
+            // = when all competitors have been placed
             // = * it raises an error
             let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
             assert_eq!(
                 result,
                 Err(AzTradingCompetitionError::UnprocessableEntity(
-                    "Judge place attempt must be u128 max.".to_string(),
+                    "All competitors have been placed.".to_string(),
                 ))
             );
-            // = when competition judge_place_attempt is at max
-            competition.judge_place_attempt = u128::MAX;
+            // = when all competitors haven't been placed
+            competition.competitors_count = 1;
+            competition.competitors_placed_count = 0;
             az_trading_competition
                 .competitions
                 .insert(competition.id, &competition);
-            // == when competition token competitor doesn't exist
-            // == * it raises an error
+            // == when competition judge_place_attempt is less than the max
+            competition.judge_place_attempt = u128::MAX - 1;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // === when block timestamp is before or equal to competition judgment deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                competition.end + DAY_IN_MS * 365,
+            );
+            // === * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Competition can still be judged.".to_string(),
+                ))
+            );
+            // === when block timestamp is after the competition judgment deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                competition.end + DAY_IN_MS * 365 + 1,
+            );
+            // ==== when competition token competitor doesn't exist
+            // ==== * it raises an error
             let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
             assert_eq!(
                 result,
@@ -2799,18 +2823,18 @@ mod az_trading_competition {
                     "CompetitionTokenCompetitor".to_string(),
                 ))
             );
-            // == when competition token competitor exists
+            // ==== when competition token competitor exists
             let mut competition_token_competitor: CompetitionTokenCompetitor =
                 CompetitionTokenCompetitor {
                     amount: 1,
                     collected: true,
                 };
-            // === when amount has already been collected
+            // ===== when amount has already been collected
             az_trading_competition.competition_token_competitors.insert(
                 (competition.id, accounts.django, accounts.bob),
                 &competition_token_competitor,
             );
-            // === * it raises an error
+            // ===== * it raises an error
             let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
             assert_eq!(
                 result,
@@ -2818,8 +2842,33 @@ mod az_trading_competition {
                     "Token has already been collected.".to_string(),
                 ))
             );
-            // === when amount hasn't been collected
+            // ===== when amount hasn't been collected
             competition_token_competitor.collected = false;
+            // ====== when amount is zero
+            competition_token_competitor.amount = 0;
+            az_trading_competition.competition_token_competitors.insert(
+                (competition.id, accounts.django, accounts.bob),
+                &competition_token_competitor,
+            );
+            // ====== * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Amount is zero.".to_string(),
+                ))
+            );
+            // ======= when amount is positive
+            // REST NEEDS TO BE TESTED IN INTEGRATION TEST
+            // == when competition judge_place_attempt is the max
+            competition.judge_place_attempt = u128::MAX;
+            az_trading_competition
+                .competitions
+                .insert(competition.id, &competition);
+            // === when block timestamp is before or equal to competition judgment deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                competition.end + DAY_IN_MS * 365,
+            );
             // ==== when amount is zero
             competition_token_competitor.amount = 0;
             az_trading_competition.competition_token_competitors.insert(
@@ -2834,8 +2883,18 @@ mod az_trading_competition {
                     "Amount is zero.".to_string(),
                 ))
             );
-            // ===== when amount is positive
-            // REST NEEDS TO BE TESTED IN INTEGRATION TEST
+            // === when block timestamp is after the competition judgment deadline
+            ink::env::test::set_block_timestamp::<ink::env::DefaultEnvironment>(
+                competition.end + DAY_IN_MS * 365 + 1,
+            );
+            // ==== * it raises an error
+            let result = az_trading_competition.emergency_rescue(competition.id, accounts.django);
+            assert_eq!(
+                result,
+                Err(AzTradingCompetitionError::UnprocessableEntity(
+                    "Amount is zero.".to_string(),
+                ))
+            );
         }
 
         #[ink::test]
